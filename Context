@@ -1,0 +1,7 @@
+# Alu Project Documentation
+
+## Phase 1: Initial Setup
+- [x] Create Context documentation file.
+- [x] Inquired about adding skills and MCP servers.
+  - MCP servers: `gemini mcp add <name> <commandOrUrl> [args...]`
+  - Skills: `gemini skills install [source]`

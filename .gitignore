@@ -1,0 +1,27 @@
+# Dependencies
+/node_modules
+/alu-frontend/node_modules
+/alu-backend/node_modules
+
+# Next.js build output
+/alu-frontend/.next
+
+# Production build folder (if any)
+/build
+/dist
+
+# Env files
+.env
+.env*.local
+/alu-backend/.env
+
+# Log files
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+dev.log
+
+# Temporary files
+.tmp
+.DS_Store

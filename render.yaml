@@ -1,0 +1,39 @@
+services:
+  # Backend Service
+  - type: web
+    name: alu-backend
+    env: node
+    rootDir: ./alu-backend
+    plan: free
+    healthCheckPath: /
+    buildFilter:
+      paths:
+      - alu-backend/**
+    build: npm install
+    start: npm start
+    envVars:
+      - key: NODE_VERSION
+        value: 20 # Or your preferred Node.js version
+      # IMPORTANT: You must add your secrets (MONGODB_URI, GEMINI_API_KEY, etc.)
+      # in the Render.com dashboard under Environment. Do not put them here.
+
+  # Frontend Service
+  - type: web
+    name: alu-frontend
+    env: node
+    rootDir: ./alu-frontend
+    plan: free
+    buildFilter:
+      paths:
+      - alu-frontend/**
+    build: npm run build
+    start: npm start
+    envVars:
+      - key: NODE_VERSION
+        value: 20
+      - key: NEXT_PUBLIC_BACKEND_URL
+        # This will automatically be set to your backend's Render URL
+        fromService:
+          type: web
+          name: alu-backend
+          property: url
