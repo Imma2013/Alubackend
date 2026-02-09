@@ -1,6 +1,6 @@
 import { UserButton } from "@clerk/nextjs";
 import GenerationForm from './components/GenerationForm';
-import Feed from './components-v2/Feed';
+import Feed from './components/Feed';
 
 export default function Home() {
   return (
