@@ -1,26 +1,307 @@
-import { UserButton } from "@clerk/nextjs";
-import GenerationForm from './components/GenerationForm';
-import Feed from './components/Feed';
+'use client';
 
-export default function Home() {
+import { useState } from 'react';
+import { UserButton } from '@clerk/nextjs';
+import {
+  HomeIcon,
+  ShortsIcon,
+  VideosIcon,
+  MessagesIcon,
+  NotificationsIcon,
+  ProfileIcon,
+  CreateIcon,
+  SearchIcon,
+} from './components/icons';
+import HomeTab from './components/tabs/HomeTab';
+import ShortsTab from './components/tabs/ShortsTab';
+import VideosTab from './components/tabs/VideosTab';
+import MessagesTab from './components/tabs/MessagesTab';
+import CreateTab from './components/tabs/CreateTab';
+import ProfileTab from './components/tabs/ProfileTab';
+import NotificationsTab from './components/tabs/NotificationsTab';
+
+type Tab = 'home' | 'shorts' | 'videos' | 'messages' | 'create' | 'profile' | 'notifications';
+
+const TABS_WITH_HEADER: Tab[] = ['home', 'shorts', 'videos', 'profile'];
+
+export default function App() {
+  const [activeTab, setActiveTab] = useState<Tab>('home');
+  const [showAI, setShowAI] = useState(true);
+  const [showNormal, setShowNormal] = useState(true);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+
+  const toggleAI = () => {
+    // Don't allow both off — if turning AI off, Normal must stay on
+    if (showAI && !showNormal) return;
+    setShowAI(!showAI);
+  };
+  const toggleNormal = () => {
+    if (showNormal && !showAI) return;
+    setShowNormal(!showNormal);
+  };
+
+  const showStickyHeader = TABS_WITH_HEADER.includes(activeTab);
+
+  const sidebarItems: { key: Tab; label: string; icon: (active: boolean) => React.ReactNode }[] = [
+    { key: 'home', label: 'Home', icon: (a) => <HomeIcon active={a} /> },
+    { key: 'shorts', label: 'Shorts', icon: (a) => <ShortsIcon active={a} /> },
+    { key: 'videos', label: 'Videos', icon: (a) => <VideosIcon active={a} /> },
+    { key: 'messages', label: 'Messages', icon: (a) => <MessagesIcon active={a} /> },
+    { key: 'notifications', label: 'Notifications', icon: (a) => <NotificationsIcon active={a} /> },
+    { key: 'profile', label: 'Profile', icon: (a) => <ProfileIcon active={a} /> },
+  ];
+
+  const bottomNavItems: { key: Tab; label: string; icon: (active: boolean) => React.ReactNode }[] = [
+    { key: 'home', label: 'Home', icon: (a) => <HomeIcon active={a} size={22} /> },
+    { key: 'shorts', label: 'Shorts', icon: (a) => <ShortsIcon active={a} size={22} /> },
+    { key: 'create', label: '', icon: () => <CreateIcon size={24} /> },
+    { key: 'videos', label: 'Videos', icon: (a) => <VideosIcon active={a} size={22} /> },
+    { key: 'profile', label: 'Profile', icon: (a) => <ProfileIcon active={a} size={22} /> },
+  ];
+
   return (
-    <div className="flex min-h-screen w-full flex-col bg-zinc-50 font-sans text-zinc-900 dark:bg-black dark:text-zinc-50">
-      <header className="sticky top-0 z-10 flex h-16 items-center justify-between px-4 md:px-6 border-b border-zinc-200 bg-white/80 backdrop-blur-sm dark:border-zinc-800 dark:bg-black/80">
-        <h1 className="text-xl font-semibold tracking-tight">Alu</h1>
-        <UserButton afterSignOutUrl="/" />
-      </header>
-      
-      <main className="flex flex-1 flex-col p-4 md:p-6">
-        {/* --- Generation UI Section --- */}
-        <section className="w-full max-w-2xl mx-auto mb-12">
-          <GenerationForm />
-        </section>
+    <div className="min-h-screen bg-[var(--alu-bg)]">
+      {/* ====== MOBILE TOP BAR (below md) ====== */}
+      <header className="md:hidden fixed top-0 left-0 right-0 z-50 bg-white/95 backdrop-blur-md border-b border-[var(--alu-border)]" style={{ height: 'var(--alu-header-height)' }}>
+        <div className="flex items-center h-full px-3 gap-2">
+          {/* Logo */}
+          <button onClick={() => setActiveTab('home')} className="shrink-0 mr-1">
+            <span className="text-xl font-extrabold tracking-tight" style={{ color: 'var(--alu-primary)' }}>alu</span>
+          </button>
 
-        {/* --- Feed Section --- */}
-        <section className="w-full max-w-4xl mx-auto">
-          <Feed />
-        </section>
+          {/* Search (Instagram-style: icon only, expands on tap) */}
+          {searchOpen ? (
+            <div className="flex-1 relative animate-fade-in">
+              <div className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--alu-text-tertiary)]">
+                <SearchIcon size={16} />
+              </div>
+              <input
+                type="text"
+                placeholder="Search"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                autoFocus
+                onBlur={() => { if (!searchQuery) setSearchOpen(false); }}
+                className="w-full h-9 pl-8 pr-8 rounded-full text-sm bg-[var(--alu-surface)] text-[var(--alu-text)] placeholder:text-[var(--alu-text-tertiary)] outline-none ring-2 ring-[var(--alu-primary-glow)]"
+              />
+              <button
+                onClick={() => { setSearchOpen(false); setSearchQuery(''); }}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[var(--alu-text-tertiary)] hover:text-[var(--alu-text)]"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              </button>
+            </div>
+          ) : (
+            <div className="flex-1" />
+          )}
+
+          {!searchOpen && (
+            <button
+              onClick={() => setSearchOpen(true)}
+              className="p-1.5 shrink-0 text-[var(--alu-text-secondary)] hover:text-[var(--alu-text)] transition-colors"
+            >
+              <SearchIcon size={22} />
+            </button>
+          )}
+
+          {/* AI/Normal toggle (compact, independent) */}
+          <div className="flex gap-1 shrink-0">
+            <button
+              onClick={toggleAI}
+              className={`toggle-pill px-2.5 py-1 rounded-full text-xs font-medium ${showAI ? 'toggle-pill-active' : 'bg-[var(--alu-surface)] text-[var(--alu-text-tertiary)]'}`}
+            >
+              AI
+            </button>
+            <button
+              onClick={toggleNormal}
+              className={`toggle-pill px-2.5 py-1 rounded-full text-xs font-medium ${showNormal ? 'toggle-pill-active' : 'bg-[var(--alu-surface)] text-[var(--alu-text-tertiary)]'}`}
+            >
+              Normal
+            </button>
+          </div>
+
+          {/* Notifications + Messages */}
+          <button
+            onClick={() => setActiveTab('notifications')}
+            className={`relative p-1.5 shrink-0 transition-colors ${activeTab === 'notifications' ? 'text-[var(--alu-primary)]' : 'text-[var(--alu-text-secondary)] hover:text-[var(--alu-text)]'}`}
+          >
+            <NotificationsIcon size={20} active={activeTab === 'notifications'} />
+            <div className="absolute top-0.5 right-0.5 w-2 h-2 rounded-full bg-[var(--alu-danger)]" />
+          </button>
+          <button
+            onClick={() => setActiveTab('messages')}
+            className={`relative p-1.5 shrink-0 transition-colors ${activeTab === 'messages' ? 'text-[var(--alu-primary)]' : 'text-[var(--alu-text-secondary)] hover:text-[var(--alu-text)]'}`}
+          >
+            <MessagesIcon size={20} active={activeTab === 'messages'} />
+            <div className="absolute top-0.5 right-0.5 w-2 h-2 rounded-full bg-[var(--alu-primary)]" />
+          </button>
+        </div>
+      </header>
+
+      {/* ====== DESKTOP SIDEBAR (md and above) ====== */}
+      <aside className="hidden md:flex fixed top-0 left-0 bottom-0 z-40 flex-col border-r border-[var(--alu-border)]" style={{ width: 'var(--alu-sidebar-width)' }}>
+        {/* Logo */}
+        <div className="h-16 flex items-center px-6">
+          <button onClick={() => setActiveTab('home')}>
+            <span className="text-2xl font-extrabold tracking-tight" style={{ color: 'var(--alu-primary)' }}>alu</span>
+          </button>
+        </div>
+
+        {/* Nav Items */}
+        <nav className="flex-1 px-3 py-2 flex flex-col gap-0.5">
+          {sidebarItems.map((item) => {
+            const isActive = activeTab === item.key;
+            return (
+              <button
+                key={item.key}
+                onClick={() => setActiveTab(item.key)}
+                className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200 w-full text-left ${
+                  isActive
+                    ? 'bg-[var(--alu-primary-glow)] text-[var(--alu-primary-dark)] font-semibold'
+                    : 'text-[var(--alu-text-secondary)] hover:bg-[var(--alu-hover)] hover:text-[var(--alu-text)]'
+                }`}
+              >
+                <span className={isActive ? 'text-[var(--alu-primary)]' : ''}>{item.icon(isActive)}</span>
+                {item.label}
+                {item.key === 'notifications' && (
+                  <div className="w-2 h-2 rounded-full bg-[var(--alu-danger)] ml-auto" />
+                )}
+                {item.key === 'messages' && (
+                  <span className="ml-auto text-[11px] font-bold bg-[var(--alu-primary)] text-white w-5 h-5 rounded-full flex items-center justify-center">4</span>
+                )}
+              </button>
+            );
+          })}
+
+          {/* Create Button */}
+          <button
+            onClick={() => setActiveTab('create')}
+            className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold mt-4 transition-all duration-200 w-full text-left text-white hover:opacity-90 create-btn-glow`}
+            style={{ background: 'linear-gradient(135deg, var(--alu-primary), var(--alu-primary-light))' }}
+          >
+            <CreateIcon size={20} />
+            Create
+          </button>
+        </nav>
+
+        {/* User at bottom */}
+        <div className="p-4 border-t border-[var(--alu-border)]">
+          <div className="flex items-center gap-3">
+            <UserButton afterSignOutUrl="/" />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-[var(--alu-text)] truncate">Your Account</p>
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      {/* ====== MAIN CONTENT ====== */}
+      <main
+        className="md:ml-[var(--alu-sidebar-width)]"
+        style={{
+          paddingTop: 'var(--alu-header-height)',
+          paddingBottom: 'calc(var(--alu-bottomnav-height) + 8px)',
+        }}
+      >
+        {/* Desktop sticky header */}
+        {showStickyHeader && (
+          <div className="hidden md:flex sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-[var(--alu-border)] items-center gap-3 px-6 h-14">
+            {/* Desktop search: icon that expands */}
+            {searchOpen ? (
+              <div className="relative flex-1 max-w-md animate-fade-in">
+                <div className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--alu-text-tertiary)]">
+                  <SearchIcon size={18} />
+                </div>
+                <input
+                  type="text"
+                  placeholder="Search"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  autoFocus
+                  onBlur={() => { if (!searchQuery) setSearchOpen(false); }}
+                  className="w-full h-10 pl-10 pr-10 rounded-full text-sm bg-[var(--alu-surface)] text-[var(--alu-text)] placeholder:text-[var(--alu-text-tertiary)] outline-none ring-2 ring-[var(--alu-primary-glow)]"
+                />
+                <button
+                  onClick={() => { setSearchOpen(false); setSearchQuery(''); }}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--alu-text-tertiary)] hover:text-[var(--alu-text)]"
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => setSearchOpen(true)}
+                className="flex items-center gap-2 h-10 px-4 rounded-full bg-[var(--alu-surface)] text-[var(--alu-text-tertiary)] hover:bg-[var(--alu-hover)] transition-colors"
+              >
+                <SearchIcon size={18} />
+                <span className="text-sm">Search</span>
+              </button>
+            )}
+            <div className="flex gap-1.5 ml-auto">
+              <button
+                onClick={toggleAI}
+                className={`toggle-pill px-4 py-1.5 rounded-full text-sm font-medium ${showAI ? 'toggle-pill-active' : 'bg-[var(--alu-surface)] text-[var(--alu-text-tertiary)]'}`}
+              >
+                AI
+              </button>
+              <button
+                onClick={toggleNormal}
+                className={`toggle-pill px-4 py-1.5 rounded-full text-sm font-medium ${showNormal ? 'toggle-pill-active' : 'bg-[var(--alu-surface)] text-[var(--alu-text-tertiary)]'}`}
+              >
+                Normal
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Tab Content */}
+        <div className="w-full">
+          {activeTab === 'home' && <HomeTab />}
+          {activeTab === 'shorts' && <ShortsTab />}
+          {activeTab === 'videos' && <VideosTab />}
+          {activeTab === 'messages' && <MessagesTab />}
+          {activeTab === 'create' && <CreateTab />}
+          {activeTab === 'profile' && <ProfileTab />}
+          {activeTab === 'notifications' && <NotificationsTab />}
+        </div>
       </main>
+
+      {/* ====== MOBILE BOTTOM NAV (below md) ====== */}
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-white/95 backdrop-blur-md border-t border-[var(--alu-border)] bottom-nav-safe" style={{ height: 'var(--alu-bottomnav-height)' }}>
+        <div className="flex items-center justify-around h-full px-2">
+          {bottomNavItems.map((item) => {
+            const isActive = activeTab === item.key;
+            const isCreate = item.key === 'create';
+
+            if (isCreate) {
+              return (
+                <button
+                  key={item.key}
+                  onClick={() => setActiveTab('create')}
+                  className="flex items-center justify-center w-11 h-11 rounded-xl text-white transition-all duration-200 active:scale-95 create-btn-glow"
+                  style={{ background: 'linear-gradient(135deg, var(--alu-primary), var(--alu-primary-light))' }}
+                >
+                  {item.icon(false)}
+                </button>
+              );
+            }
+
+            return (
+              <button
+                key={item.key}
+                onClick={() => setActiveTab(item.key)}
+                className={`flex flex-col items-center justify-center gap-0.5 py-1 px-3 transition-colors duration-200 ${
+                  isActive ? 'text-[var(--alu-primary)]' : 'text-[var(--alu-text-tertiary)]'
+                }`}
+              >
+                {item.icon(isActive)}
+                <span className={`text-[10px] ${isActive ? 'font-semibold' : 'font-medium'}`}>{item.label}</span>
+              </button>
+            );
+          })}
+        </div>
+      </nav>
     </div>
   );
 }
