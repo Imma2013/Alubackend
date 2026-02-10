@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { UserButton } from '@clerk/nextjs';
+import { UserButton, useUser, SignInButton } from '@clerk/nextjs';
 import {
   HomeIcon,
   ShortsIcon,
@@ -11,6 +11,7 @@ import {
   ProfileIcon,
   CreateIcon,
   SearchIcon,
+  AluLogo,
 } from './components/icons';
 import HomeTab from './components/tabs/HomeTab';
 import ShortsTab from './components/tabs/ShortsTab';
@@ -22,14 +23,39 @@ import NotificationsTab from './components/tabs/NotificationsTab';
 
 type Tab = 'home' | 'shorts' | 'videos' | 'messages' | 'create' | 'profile' | 'notifications';
 
-const TABS_WITH_HEADER: Tab[] = ['home', 'shorts', 'videos', 'profile'];
+const TABS_WITH_HEADER: Tab[] = ['home', 'shorts', 'videos'];
 
 export default function App() {
+  const { isSignedIn, isLoaded } = useUser();
   const [activeTab, setActiveTab] = useState<Tab>('home');
   const [showAI, setShowAI] = useState(true);
   const [showNormal, setShowNormal] = useState(true);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+
+  // Sign-in screen for logged-out users
+  if (isLoaded && !isSignedIn) {
+    return (
+      <div className="min-h-screen bg-[var(--alu-bg)] flex items-center justify-center">
+        <div className="text-center px-6 max-w-sm mx-auto animate-fade-in">
+          <div className="flex justify-center mb-6">
+            <AluLogo size={40} />
+          </div>
+          <h1 className="text-2xl font-bold text-alu-text mb-2">Welcome to Alu</h1>
+          <p className="text-sm text-alu-text-secondary mb-8">The next generation social network powered by AI</p>
+          <SignInButton mode="modal">
+            <button
+              className="w-full py-3.5 rounded-xl font-bold text-white text-sm transition-all duration-200 hover:opacity-90 active:scale-[0.98]"
+              style={{ background: 'linear-gradient(135deg, var(--alu-primary), var(--alu-primary-light))' }}
+            >
+              Sign In
+            </button>
+          </SignInButton>
+          <p className="text-xs text-alu-text-tertiary mt-4">Create, share, and discover AI-powered content</p>
+        </div>
+      </div>
+    );
+  }
 
   const toggleAI = () => {
     // Don't allow both off — if turning AI off, Normal must stay on
@@ -67,59 +93,66 @@ export default function App() {
         <div className="flex items-center h-full px-3 gap-2">
           {/* Logo */}
           <button onClick={() => setActiveTab('home')} className="shrink-0 mr-1">
-            <span className="text-xl font-extrabold tracking-tight" style={{ color: 'var(--alu-primary)' }}>alu</span>
+            <AluLogo size={22} />
           </button>
 
-          {/* Search (Instagram-style: icon only, expands on tap) */}
-          {searchOpen ? (
-            <div className="flex-1 relative animate-fade-in">
-              <div className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--alu-text-tertiary)]">
-                <SearchIcon size={16} />
+          {/* Search + AI/Normal toggle — hidden on profile tab (like Instagram) */}
+          {activeTab !== 'profile' ? (
+            <>
+              {/* Search (Instagram-style: icon only, expands on tap) */}
+              {searchOpen ? (
+                <div className="flex-1 relative animate-fade-in">
+                  <div className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--alu-text-tertiary)]">
+                    <SearchIcon size={16} />
+                  </div>
+                  <input
+                    type="text"
+                    placeholder="Search"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    autoFocus
+                    onBlur={() => { if (!searchQuery) setSearchOpen(false); }}
+                    className="w-full h-9 pl-8 pr-8 rounded-full text-sm bg-[var(--alu-surface)] text-[var(--alu-text)] placeholder:text-[var(--alu-text-tertiary)] outline-none ring-2 ring-[var(--alu-primary-glow)]"
+                  />
+                  <button
+                    onClick={() => { setSearchOpen(false); setSearchQuery(''); }}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[var(--alu-text-tertiary)] hover:text-[var(--alu-text)]"
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                  </button>
+                </div>
+              ) : (
+                <div className="flex-1" />
+              )}
+
+              {!searchOpen && (
+                <button
+                  onClick={() => setSearchOpen(true)}
+                  className="p-1.5 shrink-0 text-[var(--alu-text-secondary)] hover:text-[var(--alu-text)] transition-colors"
+                >
+                  <SearchIcon size={22} />
+                </button>
+              )}
+
+              {/* AI/Normal toggle (compact, independent) */}
+              <div className="flex gap-1 shrink-0">
+                <button
+                  onClick={toggleAI}
+                  className={`toggle-pill px-2.5 py-1 rounded-full text-xs font-medium ${showAI ? 'toggle-pill-active' : 'bg-[var(--alu-surface)] text-[var(--alu-text-tertiary)]'}`}
+                >
+                  AI
+                </button>
+                <button
+                  onClick={toggleNormal}
+                  className={`toggle-pill px-2.5 py-1 rounded-full text-xs font-medium ${showNormal ? 'toggle-pill-active' : 'bg-[var(--alu-surface)] text-[var(--alu-text-tertiary)]'}`}
+                >
+                  Normal
+                </button>
               </div>
-              <input
-                type="text"
-                placeholder="Search"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                autoFocus
-                onBlur={() => { if (!searchQuery) setSearchOpen(false); }}
-                className="w-full h-9 pl-8 pr-8 rounded-full text-sm bg-[var(--alu-surface)] text-[var(--alu-text)] placeholder:text-[var(--alu-text-tertiary)] outline-none ring-2 ring-[var(--alu-primary-glow)]"
-              />
-              <button
-                onClick={() => { setSearchOpen(false); setSearchQuery(''); }}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[var(--alu-text-tertiary)] hover:text-[var(--alu-text)]"
-              >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-              </button>
-            </div>
+            </>
           ) : (
             <div className="flex-1" />
           )}
-
-          {!searchOpen && (
-            <button
-              onClick={() => setSearchOpen(true)}
-              className="p-1.5 shrink-0 text-[var(--alu-text-secondary)] hover:text-[var(--alu-text)] transition-colors"
-            >
-              <SearchIcon size={22} />
-            </button>
-          )}
-
-          {/* AI/Normal toggle (compact, independent) */}
-          <div className="flex gap-1 shrink-0">
-            <button
-              onClick={toggleAI}
-              className={`toggle-pill px-2.5 py-1 rounded-full text-xs font-medium ${showAI ? 'toggle-pill-active' : 'bg-[var(--alu-surface)] text-[var(--alu-text-tertiary)]'}`}
-            >
-              AI
-            </button>
-            <button
-              onClick={toggleNormal}
-              className={`toggle-pill px-2.5 py-1 rounded-full text-xs font-medium ${showNormal ? 'toggle-pill-active' : 'bg-[var(--alu-surface)] text-[var(--alu-text-tertiary)]'}`}
-            >
-              Normal
-            </button>
-          </div>
 
           {/* Notifications + Messages */}
           <button
@@ -144,7 +177,7 @@ export default function App() {
         {/* Logo */}
         <div className="h-16 flex items-center px-6">
           <button onClick={() => setActiveTab('home')}>
-            <span className="text-2xl font-extrabold tracking-tight" style={{ color: 'var(--alu-primary)' }}>alu</span>
+            <AluLogo size={28} />
           </button>
         </div>
 
@@ -257,7 +290,7 @@ export default function App() {
 
         {/* Tab Content */}
         <div className="w-full">
-          {activeTab === 'home' && <HomeTab />}
+          {activeTab === 'home' && <HomeTab showAI={showAI} showNormal={showNormal} />}
           {activeTab === 'shorts' && <ShortsTab />}
           {activeTab === 'videos' && <VideosTab />}
           {activeTab === 'messages' && <MessagesTab />}

@@ -1,55 +1,133 @@
 'use client';
 
-import { useState } from 'react';
-import { HeartIcon, CommentIcon, ShareIcon, BookmarkIcon } from '../icons';
-
-const MOCK_SHORTS = [
-  { id: 1, user: 'artflow', description: 'AI-generated dance animation 🤖💃 #alu #aigenereted', likes: '12.4K', comments: '231', color: '#D4A017' },
-  { id: 2, user: 'filmjunkie', description: 'Quick tutorial: color grading in 30 seconds 🎬', likes: '8.7K', comments: '89', color: '#B8860B' },
-  { id: 3, user: 'maya.creates', description: 'POV: You discover Alu AI for the first time 😮', likes: '45.2K', comments: '1.2K', color: '#F5D060' },
-];
+import { useState, useRef, useCallback } from 'react';
+import { useLiveQuery } from 'dexie-react-hooks';
+import { db, Post } from '../../db';
+import MediaItem from '../MediaItem';
+import { HeartIcon, CommentIcon, ShareIcon, BookmarkIcon, ShortsIcon } from '../icons';
 
 export default function ShortsTab() {
   const [currentIndex, setCurrentIndex] = useState(0);
-  const [liked, setLiked] = useState<Set<number>>(new Set());
-  const short = MOCK_SHORTS[currentIndex];
+  const [liked, setLiked] = useState<Set<string>>(new Set());
+  const [swipeOffset, setSwipeOffset] = useState(0);
+  const [isSwiping, setIsSwiping] = useState(false);
+  const touchStartY = useRef(0);
+  const touchStartTime = useRef(0);
+
+  // Real data from Dexie — shorts
+  const shorts = useLiveQuery(
+    async () => {
+      const all = await db.posts.where('mediaType').equals('video').toArray();
+      return all
+        .filter((p: Post) => !p.videoType || p.videoType === 'short')
+        .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+    },
+    []
+  );
+
+  const shortsList = shorts || [];
+  const short = shortsList[currentIndex];
 
   const toggleLike = () => {
+    if (!short) return;
+    const key = short._id || String(short.id);
     setLiked(prev => {
       const next = new Set(prev);
-      if (next.has(short.id)) next.delete(short.id);
-      else next.add(short.id);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
       return next;
     });
   };
 
-  const goNext = () => {
-    if (currentIndex < MOCK_SHORTS.length - 1) setCurrentIndex(currentIndex + 1);
+  const goNext = useCallback(() => {
+    if (currentIndex < shortsList.length - 1) setCurrentIndex(prev => prev + 1);
+  }, [currentIndex, shortsList.length]);
+
+  const goPrev = useCallback(() => {
+    if (currentIndex > 0) setCurrentIndex(prev => prev - 1);
+  }, [currentIndex]);
+
+  // Touch handlers for vertical swipe (TikTok style)
+  const handleTouchStart = (e: React.TouchEvent) => {
+    touchStartY.current = e.touches[0].clientY;
+    touchStartTime.current = Date.now();
+    setIsSwiping(true);
   };
 
-  const goPrev = () => {
-    if (currentIndex > 0) setCurrentIndex(currentIndex - 1);
+  const handleTouchMove = (e: React.TouchEvent) => {
+    if (!isSwiping) return;
+    const deltaY = e.touches[0].clientY - touchStartY.current;
+    const canGoUp = currentIndex < shortsList.length - 1;
+    const canGoDown = currentIndex > 0;
+    if (deltaY < 0 && !canGoUp) {
+      setSwipeOffset(deltaY * 0.2);
+    } else if (deltaY > 0 && !canGoDown) {
+      setSwipeOffset(deltaY * 0.2);
+    } else {
+      setSwipeOffset(deltaY * 0.5);
+    }
   };
+
+  const handleTouchEnd = () => {
+    setIsSwiping(false);
+    const elapsed = Date.now() - touchStartTime.current;
+    const velocity = Math.abs(swipeOffset) / elapsed;
+
+    if (swipeOffset < -50 || (swipeOffset < -20 && velocity > 0.3)) {
+      goNext();
+    } else if (swipeOffset > 50 || (swipeOffset > 20 && velocity > 0.3)) {
+      goPrev();
+    }
+    setSwipeOffset(0);
+  };
+
+  const handleWheel = useCallback((e: React.WheelEvent) => {
+    if (e.deltaY > 30) goNext();
+    else if (e.deltaY < -30) goPrev();
+  }, [goNext, goPrev]);
+
+  // Empty state
+  if (shortsList.length === 0) {
+    return (
+      <div className="w-full h-full flex items-center justify-center animate-fade-in">
+        <div className="text-center py-16">
+          <div className="w-16 h-16 rounded-full bg-alu-surface flex items-center justify-center mx-auto mb-4 text-alu-text-tertiary">
+            <ShortsIcon size={28} />
+          </div>
+          <p className="text-sm font-semibold text-alu-text mb-1">No shorts yet</p>
+          <p className="text-xs text-alu-text-tertiary">Be the first to post one</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!short) return null;
+
+  const shortKey = short._id || String(short.id);
 
   return (
-    <div className="w-full h-full flex items-center justify-center animate-fade-in">
-      <div className="relative w-full max-w-[400px] mx-auto" style={{ height: 'calc(100vh - 180px)', maxHeight: '720px' }}>
-        {/* Video area */}
+    <div
+      className="w-full h-full flex items-center justify-center animate-fade-in select-none"
+      onWheel={handleWheel}
+    >
+      <div
+        className="relative w-full max-w-[400px] mx-auto overflow-hidden"
+        style={{ height: 'calc(100vh - 180px)', maxHeight: '720px' }}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
+      >
+        {/* Video area — slides vertically */}
         <div
-          className="w-full h-full rounded-2xl overflow-hidden relative"
-          style={{ background: `linear-gradient(180deg, ${short.color}22 0%, ${short.color}88 60%, ${short.color}dd 100%)` }}
-          onClick={(e) => {
-            const rect = e.currentTarget.getBoundingClientRect();
-            const y = e.clientY - rect.top;
-            if (y < rect.height / 2) goPrev();
-            else goNext();
+          className="w-full h-full rounded-2xl overflow-hidden relative bg-black"
+          style={{
+            transform: `translateY(${swipeOffset}px)`,
+            transition: isSwiping ? 'none' : 'transform 0.3s ease-out',
           }}
         >
-          {/* Play button overlay */}
-          <div className="absolute inset-0 flex items-center justify-center">
-            <div className="w-20 h-20 rounded-full bg-black/20 backdrop-blur-md flex items-center justify-center">
-              <svg width="32" height="32" viewBox="0 0 24 24" fill="white"><polygon points="8,5 19,12 8,19"/></svg>
-            </div>
+          {/* Media content */}
+          <div className="absolute inset-0">
+            <MediaItem post={short} />
           </div>
 
           {/* Bottom gradient */}
@@ -59,29 +137,30 @@ export default function ShortsTab() {
           <div className="absolute bottom-0 left-0 right-16 p-4">
             <div className="flex items-center gap-2 mb-2">
               <div className="w-8 h-8 rounded-full bg-white/20 backdrop-blur-sm flex items-center justify-center text-white text-xs font-bold">
-                {short.user[0].toUpperCase()}
+                {(short.userId || 'U')[0].toUpperCase()}
               </div>
-              <span className="text-white font-semibold text-sm">{short.user}</span>
-              <button className="text-xs font-semibold text-white border border-white/40 rounded-full px-3 py-0.5 hover:bg-white/10 transition-colors">
-                Follow
-              </button>
+              <span className="text-white font-semibold text-sm">{short.userId?.slice(0, 12) || 'User'}</span>
             </div>
-            <p className="text-white text-sm leading-snug">{short.description}</p>
+            {short.safePrompt && short.safePrompt !== 'User upload' && (
+              <p className="text-white text-sm leading-snug">{short.safePrompt}</p>
+            )}
+            {short.is_ai && (
+              <span className="inline-block mt-1 text-[10px] font-bold px-2 py-0.5 rounded bg-white/20 text-white backdrop-blur-sm">AI</span>
+            )}
           </div>
 
-          {/* Right side actions */}
+          {/* Right side actions (TikTok style) */}
           <div className="absolute bottom-20 right-3 flex flex-col items-center gap-5">
             <button onClick={(e) => { e.stopPropagation(); toggleLike(); }} className="flex flex-col items-center gap-1">
-              <div className={`w-10 h-10 rounded-full bg-white/15 backdrop-blur-sm flex items-center justify-center transition-colors ${liked.has(short.id) ? 'text-red-400' : 'text-white'}`}>
+              <div className={`w-10 h-10 rounded-full bg-white/15 backdrop-blur-sm flex items-center justify-center transition-colors ${liked.has(shortKey) ? 'text-red-400' : 'text-white'}`}>
                 <HeartIcon size={22} />
               </div>
-              <span className="text-white text-[11px] font-medium">{short.likes}</span>
+              <span className="text-white text-[11px] font-medium">{(short.likes || 0) + (liked.has(shortKey) ? 1 : 0)}</span>
             </button>
             <button onClick={(e) => e.stopPropagation()} className="flex flex-col items-center gap-1">
               <div className="w-10 h-10 rounded-full bg-white/15 backdrop-blur-sm flex items-center justify-center text-white">
                 <CommentIcon size={22} />
               </div>
-              <span className="text-white text-[11px] font-medium">{short.comments}</span>
             </button>
             <button onClick={(e) => e.stopPropagation()} className="flex flex-col items-center gap-1">
               <div className="w-10 h-10 rounded-full bg-white/15 backdrop-blur-sm flex items-center justify-center text-white">
@@ -95,12 +174,14 @@ export default function ShortsTab() {
             </button>
           </div>
 
-          {/* Navigation dots */}
-          <div className="absolute top-4 left-0 right-0 flex justify-center gap-1.5">
-            {MOCK_SHORTS.map((_, i) => (
-              <div key={i} className={`h-[3px] rounded-full transition-all duration-300 ${i === currentIndex ? 'w-6 bg-white' : 'w-2 bg-white/40'}`} />
-            ))}
-          </div>
+          {/* Swipe hint */}
+          {currentIndex < shortsList.length - 1 && (
+            <div className="absolute bottom-2 left-1/2 -translate-x-1/2 animate-bounce">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" opacity="0.5">
+                <polyline points="6,9 12,15 18,9"/>
+              </svg>
+            </div>
+          )}
         </div>
       </div>
     </div>

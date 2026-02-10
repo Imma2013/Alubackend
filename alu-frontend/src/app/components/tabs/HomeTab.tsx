@@ -1,191 +1,187 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { useLiveQuery } from 'dexie-react-hooks';
+import { useAuth } from '@clerk/nextjs';
+import { db, Post } from '../../db';
+import { pullChanges, pushChanges } from '../../syncService';
+import MediaItem from '../MediaItem';
 import { HeartIcon, CommentIcon, ShareIcon, BookmarkIcon } from '../icons';
 
-const MOCK_STORIES = [
-  { id: 1, name: 'Your Story', avatar: '', isOwn: true },
-  { id: 2, name: 'alex_ai', avatar: '', hasNew: true },
-  { id: 3, name: 'maya.creates', avatar: '', hasNew: true },
-  { id: 4, name: 'techvibes', avatar: '', hasNew: false },
-  { id: 5, name: 'artflow', avatar: '', hasNew: true },
-  { id: 6, name: 'sarah.k', avatar: '', hasNew: false },
-  { id: 7, name: 'designpro', avatar: '', hasNew: true },
-  { id: 8, name: 'filmjunkie', avatar: '', hasNew: true },
-];
+interface HomeTabProps {
+  showAI: boolean;
+  showNormal: boolean;
+}
 
-const MOCK_POSTS = [
-  {
-    id: 1,
-    user: 'alex_ai',
-    avatar: '',
-    time: '2h ago',
-    content: 'Just generated this incredible sunset landscape using Alu AI. The detail is insane.',
-    image: true,
-    imageColor: '#F5D060',
-    likes: 234,
-    comments: 18,
-    isAI: true,
-  },
-  {
-    id: 2,
-    user: 'maya.creates',
-    avatar: '',
-    time: '4h ago',
-    content: 'Morning coffee and brainstorming session. What are you all working on today?',
-    image: false,
-    likes: 89,
-    comments: 42,
-    isAI: false,
-  },
-  {
-    id: 3,
-    user: 'techvibes',
-    avatar: '',
-    time: '6h ago',
-    content: 'AI-generated short film concept art for my upcoming project. Alu makes it so easy to prototype visuals.',
-    image: true,
-    imageColor: '#B8860B',
-    likes: 567,
-    comments: 31,
-    isAI: true,
-  },
-];
+export default function HomeTab({ showAI, showNormal }: HomeTabProps) {
+  const { getToken, isSignedIn } = useAuth();
+  const [likedPosts, setLikedPosts] = useState<Set<string>>(new Set());
+  const [savedPosts, setSavedPosts] = useState<Set<string>>(new Set());
+  const [isSyncing, setIsSyncing] = useState(false);
 
-export default function HomeTab() {
-  const [likedPosts, setLikedPosts] = useState<Set<number>>(new Set());
-  const [savedPosts, setSavedPosts] = useState<Set<number>>(new Set());
+  // Live query from Dexie — real posts
+  const allPosts = useLiveQuery(
+    () => db.posts.orderBy('timestamp').reverse().toArray(),
+    []
+  );
 
-  const toggleLike = (postId: number) => {
+  // Filter by AI/Normal toggles
+  const posts = allPosts?.filter((p: Post) => {
+    if (showAI && showNormal) return true;
+    if (showAI && !showNormal) return p.is_ai;
+    if (!showAI && showNormal) return !p.is_ai;
+    return true;
+  }) || [];
+
+  // Sync on mount + every 60s
+  useEffect(() => {
+    const runSync = async () => {
+      setIsSyncing(true);
+      await pullChanges();
+      if (isSignedIn) {
+        const token = await getToken();
+        if (token) await pushChanges(token);
+      }
+      setIsSyncing(false);
+    };
+
+    runSync();
+    const interval = setInterval(runSync, 60000);
+    return () => clearInterval(interval);
+  }, [isSignedIn, getToken]);
+
+  const getPostKey = (post: Post) => post._id || String(post.id);
+
+  const toggleLike = (key: string) => {
     setLikedPosts(prev => {
       const next = new Set(prev);
-      if (next.has(postId)) next.delete(postId);
-      else next.add(postId);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
       return next;
     });
   };
 
-  const toggleSave = (postId: number) => {
+  const toggleSave = (key: string) => {
     setSavedPosts(prev => {
       const next = new Set(prev);
-      if (next.has(postId)) next.delete(postId);
-      else next.add(postId);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
       return next;
     });
+  };
+
+  const timeAgo = (date: Date) => {
+    const now = Date.now();
+    const diff = now - new Date(date).getTime();
+    const mins = Math.floor(diff / 60000);
+    if (mins < 1) return 'just now';
+    if (mins < 60) return `${mins}m ago`;
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return `${hrs}h ago`;
+    const days = Math.floor(hrs / 24);
+    return `${days}d ago`;
   };
 
   return (
     <div className="w-full max-w-[600px] mx-auto animate-fade-in">
-      {/* Stories Row */}
-      <div className="px-2 py-3 overflow-x-auto hide-scrollbar">
-        <div className="flex gap-3" style={{ minWidth: 'max-content' }}>
-          {MOCK_STORIES.map((story) => (
-            <button key={story.id} className="flex flex-col items-center gap-1 w-[72px] shrink-0">
-              <div
-                className={`w-[62px] h-[62px] rounded-full flex items-center justify-center ${
-                  story.isOwn
-                    ? 'border-2 border-dashed border-alu-text-tertiary'
-                    : story.hasNew
-                    ? 'p-[2px] bg-gradient-to-br from-[var(--alu-primary)] to-[var(--alu-primary-light)]'
-                    : 'border-2 border-alu-border'
-                }`}
-              >
-                <div className="w-[56px] h-[56px] rounded-full bg-alu-surface flex items-center justify-center text-lg">
-                  {story.isOwn ? (
-                    <span className="text-alu-text-tertiary text-2xl">+</span>
-                  ) : (
-                    <span className="text-alu-text-secondary">{story.name[0].toUpperCase()}</span>
-                  )}
-                </div>
-              </div>
-              <span className="text-[11px] text-alu-text-secondary truncate w-full text-center">
-                {story.isOwn ? 'Your Story' : story.name}
-              </span>
-            </button>
-          ))}
+      {/* Sync indicator */}
+      {isSyncing && (
+        <div className="text-center py-2">
+          <span className="text-[11px] text-alu-text-tertiary animate-pulse">Syncing...</span>
         </div>
-      </div>
-
-      {/* Divider */}
-      <div className="h-[1px] bg-alu-border" />
+      )}
 
       {/* Feed */}
       <div className="flex flex-col">
-        {MOCK_POSTS.map((post) => (
-          <article key={post.id} className="border-b border-alu-border-light">
-            {/* Post Header */}
-            <div className="flex items-center gap-3 px-4 py-3">
-              <div className="w-9 h-9 rounded-full bg-alu-surface flex items-center justify-center text-sm font-semibold text-alu-text-secondary">
-                {post.user[0].toUpperCase()}
-              </div>
-              <div className="flex-1 min-w-0">
-                <span className="font-semibold text-sm text-alu-text">{post.user}</span>
-                <span className="text-xs text-alu-text-tertiary block">{post.time}</span>
-              </div>
-              <button className="text-alu-text-tertiary hover:text-alu-text transition-colors p-1">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>
-              </button>
-            </div>
+        {!allPosts && (
+          <div className="py-16 text-center">
+            <div className="w-8 h-8 border-2 border-[var(--alu-primary)] border-t-transparent rounded-full animate-spin mx-auto mb-3" />
+            <p className="text-sm text-alu-text-tertiary">Loading feed...</p>
+          </div>
+        )}
 
-            {/* Post Content */}
-            <div className="px-4 pb-2">
-              <p className="text-sm leading-relaxed text-alu-text">{post.content}</p>
+        {allPosts && posts.length === 0 && (
+          <div className="py-16 text-center">
+            <div className="w-16 h-16 rounded-full bg-alu-surface flex items-center justify-center mx-auto mb-4">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--alu-text-tertiary)" strokeWidth="1.5" strokeLinecap="round">
+                <rect x="3" y="3" width="18" height="18" rx="2"/>
+                <circle cx="8.5" cy="8.5" r="1.5"/>
+                <path d="m21 15-5-5L5 21"/>
+              </svg>
             </div>
+            <p className="text-sm font-semibold text-alu-text mb-1">No posts yet</p>
+            <p className="text-xs text-alu-text-tertiary">Be the first to create something</p>
+          </div>
+        )}
 
-            {/* Post Image */}
-            {post.image && (
-              <div className="w-full aspect-[4/3] bg-alu-surface relative overflow-hidden">
-                <div
-                  className="w-full h-full"
-                  style={{
-                    background: `linear-gradient(135deg, ${post.imageColor}33 0%, ${post.imageColor}66 50%, ${post.imageColor}99 100%)`,
-                  }}
-                >
-                  <div className="absolute inset-0 flex items-center justify-center">
-                    <div className="w-16 h-16 rounded-full bg-white/20 backdrop-blur-sm flex items-center justify-center">
-                      <svg width="24" height="24" viewBox="0 0 24 24" fill="white"><path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/></svg>
-                    </div>
-                  </div>
+        {posts.map((post) => {
+          const key = getPostKey(post);
+          return (
+            <article key={key} className="border-b border-alu-border-light">
+              {/* Post Header */}
+              <div className="flex items-center gap-3 px-4 py-3">
+                <div className="w-9 h-9 rounded-full bg-alu-surface flex items-center justify-center text-sm font-semibold text-alu-text-secondary">
+                  {(post.userId || 'U')[0].toUpperCase()}
                 </div>
-                {post.isAI && (
+                <div className="flex-1 min-w-0">
+                  <span className="font-semibold text-sm text-alu-text">
+                    {post.userId?.slice(0, 12) || 'Unknown'}
+                  </span>
+                  <span className="text-xs text-alu-text-tertiary block">{timeAgo(post.timestamp)}</span>
+                </div>
+                <button className="text-alu-text-tertiary hover:text-alu-text transition-colors p-1">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>
+                </button>
+              </div>
+
+              {/* Caption */}
+              {post.safePrompt && post.safePrompt !== 'User upload' && (
+                <div className="px-4 pb-2">
+                  <p className="text-sm leading-relaxed text-alu-text">{post.safePrompt}</p>
+                </div>
+              )}
+
+              {/* Post Media */}
+              <div className="w-full aspect-[4/3] bg-alu-surface relative overflow-hidden">
+                <MediaItem post={post} />
+                {post.is_ai && (
                   <div className="absolute top-2 left-2 text-[10px] font-bold px-2 py-0.5 rounded bg-black/40 text-white backdrop-blur-sm">
                     AI
                   </div>
                 )}
               </div>
-            )}
 
-            {/* Post Actions */}
-            <div className="flex items-center justify-between px-4 py-2.5">
-              <div className="flex items-center gap-4">
+              {/* Post Actions */}
+              <div className="flex items-center justify-between px-4 py-2.5">
+                <div className="flex items-center gap-4">
+                  <button
+                    onClick={() => toggleLike(key)}
+                    className={`flex items-center gap-1.5 transition-all duration-200 ${
+                      likedPosts.has(key) ? 'text-[var(--alu-danger)]' : 'text-alu-text-secondary hover:text-alu-text'
+                    }`}
+                  >
+                    <HeartIcon size={20} />
+                    <span className="text-xs font-medium">{(post.likes || 0) + (likedPosts.has(key) ? 1 : 0)}</span>
+                  </button>
+                  <button className="flex items-center gap-1.5 text-alu-text-secondary hover:text-alu-text transition-colors">
+                    <CommentIcon size={20} />
+                  </button>
+                  <button className="flex items-center gap-1.5 text-alu-text-secondary hover:text-alu-text transition-colors">
+                    <ShareIcon size={20} />
+                  </button>
+                </div>
                 <button
-                  onClick={() => toggleLike(post.id)}
-                  className={`flex items-center gap-1.5 transition-all duration-200 ${
-                    likedPosts.has(post.id) ? 'text-[var(--alu-danger)]' : 'text-alu-text-secondary hover:text-alu-text'
+                  onClick={() => toggleSave(key)}
+                  className={`transition-all duration-200 ${
+                    savedPosts.has(key) ? 'text-[var(--alu-primary)]' : 'text-alu-text-secondary hover:text-alu-text'
                   }`}
                 >
-                  <HeartIcon size={20} />
-                  <span className="text-xs font-medium">{post.likes + (likedPosts.has(post.id) ? 1 : 0)}</span>
-                </button>
-                <button className="flex items-center gap-1.5 text-alu-text-secondary hover:text-alu-text transition-colors">
-                  <CommentIcon size={20} />
-                  <span className="text-xs font-medium">{post.comments}</span>
-                </button>
-                <button className="flex items-center gap-1.5 text-alu-text-secondary hover:text-alu-text transition-colors">
-                  <ShareIcon size={20} />
+                  <BookmarkIcon size={20} />
                 </button>
               </div>
-              <button
-                onClick={() => toggleSave(post.id)}
-                className={`transition-all duration-200 ${
-                  savedPosts.has(post.id) ? 'text-[var(--alu-primary)]' : 'text-alu-text-secondary hover:text-alu-text'
-                }`}
-              >
-                <BookmarkIcon size={20} />
-              </button>
-            </div>
-          </article>
-        ))}
+            </article>
+          );
+        })}
       </div>
     </div>
   );

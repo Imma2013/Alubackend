@@ -1,10 +1,10 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { useAuth } from '@clerk/nextjs';
 import { ImageIcon, ZapIcon, FilmIcon, SparkleIcon, UploadIcon, GlobeIcon, LockIcon, UsersIcon } from '../icons';
 import { db } from '../../db';
-import { saveFileFromUrl } from '../../fileSystem';
+import { saveFileFromUrl, saveFileFromBlob } from '../../fileSystem';
 
 type ContentType = 'image' | 'short' | 'video';
 
@@ -19,6 +19,12 @@ export default function CreateTab() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
 
+  // Upload state
+  const [file, setFile] = useState<File | null>(null);
+  const [preview, setPreview] = useState<string | null>(null);
+  const [isAI, setIsAI] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   const types: { key: ContentType; label: string; desc: string; icon: React.ReactNode }[] = [
     { key: 'image', label: 'Image', desc: 'Up to 3 photos', icon: <ImageIcon size={24} /> },
     { key: 'short', label: 'Short', desc: 'Up to 1 min', icon: <ZapIcon size={24} /> },
@@ -30,6 +36,98 @@ export default function CreateTab() {
     { value: 'followers', label: 'Followers', icon: <UsersIcon size={16} /> },
     { value: 'private', label: 'Only me', icon: <LockIcon size={16} /> },
   ];
+
+  const acceptTypes = selectedType === 'image'
+    ? 'image/jpeg,image/png,image/gif,image/webp'
+    : 'video/mp4,video/quicktime,video/webm';
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const selected = e.target.files?.[0];
+    if (!selected) return;
+
+    // Validate size (100MB)
+    if (selected.size > 100 * 1024 * 1024) {
+      setError('File too large. Maximum size is 100MB.');
+      return;
+    }
+
+    setFile(selected);
+    setError(null);
+    setSuccess(false);
+
+    // Create preview
+    const url = URL.createObjectURL(selected);
+    setPreview(url);
+  };
+
+  const clearFile = () => {
+    setFile(null);
+    if (preview) URL.revokeObjectURL(preview);
+    setPreview(null);
+    setIsAI(false);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  const handleUpload = async () => {
+    if (!file) return;
+    setIsLoading(true);
+    setError(null);
+    setSuccess(false);
+
+    try {
+      const token = await getToken();
+      if (!token) throw new Error('You must be signed in to upload.');
+
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('mediaType', file.type.startsWith('image/') ? 'image' : 'video');
+      formData.append('caption', caption);
+      if (selectedType === 'short') formData.append('videoType', 'short');
+      if (selectedType === 'video') formData.append('videoType', 'long');
+      formData.append('is_ai', isAI ? 'true' : 'false');
+
+      const response = await fetch(
+        `${process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3001'}/upload`,
+        {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${token}` },
+          body: formData,
+        }
+      );
+
+      if (!response.ok) {
+        const errData = await response.json();
+        throw new Error(errData.error || `Upload failed: ${response.status}`);
+      }
+
+      const result = await response.json();
+
+      if (result.post) {
+        // Save file locally to OPFS (from the File object directly, not re-download)
+        const ext = result.post.mediaType === 'image' ? 'png' : 'mp4';
+        const fileName = `${result.post._id}.${ext}`;
+        await saveFileFromBlob(file, fileName);
+
+        // Save to Dexie
+        await db.posts.add({
+          ...result.post,
+          contentUrl: fileName,
+          synced: 1,
+          updatedAt: new Date(),
+        });
+
+        setSuccess(true);
+        clearFile();
+        setCaption('');
+        setIsAI(false);
+      }
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Upload failed';
+      setError(message);
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   const handleAIGenerate = async () => {
     if (!prompt.trim()) return;
@@ -98,7 +196,7 @@ export default function CreateTab() {
         {types.map((t) => (
           <button
             key={t.key}
-            onClick={() => setSelectedType(t.key)}
+            onClick={() => { setSelectedType(t.key); clearFile(); }}
             className={`flex flex-col items-center gap-2 p-4 rounded-xl border-2 transition-all duration-200 ${
               selectedType === t.key
                 ? 'border-[var(--alu-primary)] bg-[var(--alu-primary-glow)]'
@@ -136,16 +234,48 @@ export default function CreateTab() {
 
       {/* Upload Area or AI Prompt */}
       {mode === 'upload' ? (
-        <div className="border-2 border-dashed border-alu-border rounded-xl p-8 text-center mb-6 hover:border-[var(--alu-primary)] hover:bg-[var(--alu-primary-glow)] transition-all duration-200 cursor-pointer">
-          <div className="flex justify-center mb-3 text-alu-text-tertiary">
-            <UploadIcon size={40} />
-          </div>
-          <p className="text-sm font-semibold text-alu-text mb-1">
-            Tap to upload {selectedType === 'image' ? 'photos' : selectedType === 'short' ? 'a short video' : 'a video'}
-          </p>
-          <p className="text-xs text-alu-text-tertiary">
-            {selectedType === 'image' ? 'JPG, PNG — max 3 images' : selectedType === 'short' ? 'MP4 — max 1 minute' : 'MP4 — 1 to 10 minutes'}
-          </p>
+        <div className="mb-6">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept={acceptTypes}
+            onChange={handleFileSelect}
+            className="hidden"
+          />
+          {!file ? (
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              className="w-full border-2 border-dashed border-alu-border rounded-xl p-8 text-center hover:border-[var(--alu-primary)] hover:bg-[var(--alu-primary-glow)] transition-all duration-200 cursor-pointer"
+            >
+              <div className="flex justify-center mb-3 text-alu-text-tertiary">
+                <UploadIcon size={40} />
+              </div>
+              <p className="text-sm font-semibold text-alu-text mb-1">
+                Tap to upload {selectedType === 'image' ? 'a photo' : selectedType === 'short' ? 'a short video' : 'a video'}
+              </p>
+              <p className="text-xs text-alu-text-tertiary">
+                {selectedType === 'image' ? 'JPG, PNG, GIF, WebP' : 'MP4, MOV, WebM'} — max 100MB
+              </p>
+            </button>
+          ) : (
+            <div className="relative rounded-xl overflow-hidden border-2 border-[var(--alu-primary)] bg-black">
+              {file.type.startsWith('image/') ? (
+                <img src={preview!} alt="Preview" className="w-full max-h-80 object-contain" />
+              ) : (
+                <video src={preview!} controls playsInline className="w-full max-h-80" />
+              )}
+              <button
+                onClick={clearFile}
+                className="absolute top-2 right-2 w-8 h-8 rounded-full bg-black/60 text-white flex items-center justify-center hover:bg-black/80 transition-colors"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              </button>
+              <div className="absolute bottom-2 left-2 text-[11px] bg-black/60 text-white px-2 py-1 rounded">
+                {(file.size / (1024 * 1024)).toFixed(1)}MB
+              </div>
+            </div>
+          )}
         </div>
       ) : (
         <div className="mb-6">
@@ -166,6 +296,24 @@ export default function CreateTab() {
               {selectedType === 'image' ? '3 left today' : selectedType === 'short' ? '2 left today' : '1 left today'} · Free tier
             </span>
           </div>
+        </div>
+      )}
+
+      {/* AI Content Label (upload mode only) */}
+      {mode === 'upload' && (
+        <div className="mb-6">
+          <button
+            onClick={() => setIsAI(!isAI)}
+            className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium transition-all ${
+              isAI
+                ? 'bg-[var(--alu-primary-glow)] text-[var(--alu-primary-dark)] border border-[var(--alu-primary)]'
+                : 'bg-alu-surface text-alu-text-secondary border border-transparent hover:border-alu-border'
+            }`}
+          >
+            <SparkleIcon size={14} />
+            AI Generated
+          </button>
+          <p className="text-[11px] text-alu-text-tertiary mt-1.5">Toggle if this content was made with AI</p>
         </div>
       )}
 
@@ -200,16 +348,19 @@ export default function CreateTab() {
 
       {/* Error / Success */}
       {error && <p className="text-sm text-[var(--alu-danger)] mb-4">{error}</p>}
-      {success && <p className="text-sm text-[var(--alu-success)] mb-4">Content created successfully!</p>}
+      {success && <p className="text-sm text-[var(--alu-success)] mb-4">Content {mode === 'ai' ? 'generated' : 'uploaded'} successfully!</p>}
 
       {/* Submit */}
       <button
-        onClick={mode === 'ai' ? handleAIGenerate : undefined}
-        disabled={isLoading || (mode === 'ai' && !prompt.trim())}
+        onClick={mode === 'ai' ? handleAIGenerate : handleUpload}
+        disabled={isLoading || (mode === 'ai' && !prompt.trim()) || (mode === 'upload' && !file)}
         className="w-full py-3.5 rounded-xl font-bold text-white text-sm transition-all duration-200 hover:opacity-90 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
         style={{ background: 'linear-gradient(135deg, var(--alu-primary), var(--alu-primary-light))' }}
       >
-        {isLoading ? 'Creating...' : mode === 'ai' ? 'Generate & Post' : 'Post'}
+        {isLoading
+          ? (mode === 'ai' ? 'Generating...' : 'Uploading...')
+          : (mode === 'ai' ? 'Generate & Post' : 'Post')
+        }
       </button>
     </div>
   );

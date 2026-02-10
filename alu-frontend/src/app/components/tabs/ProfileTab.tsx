@@ -1,38 +1,34 @@
 'use client';
 
 import { useState } from 'react';
-import { SettingsIcon, LockIcon, LogOutIcon } from '../icons';
-
-const MOCK_CONTENT = {
-  posts: [
-    { id: 1, color: '#D4A017', isAI: true },
-    { id: 2, color: '#B8860B', isAI: false },
-    { id: 3, color: '#F5D060', isAI: true },
-    { id: 4, color: '#D4A017', isAI: false },
-    { id: 5, color: '#B8860B', isAI: true },
-    { id: 6, color: '#F5D060', isAI: false },
-    { id: 7, color: '#D4A017', isAI: true },
-    { id: 8, color: '#B8860B', isAI: false },
-    { id: 9, color: '#F5D060', isAI: true },
-  ],
-  shorts: [
-    { id: 1, color: '#D4A017', isAI: true },
-    { id: 2, color: '#F5D060', isAI: true },
-    { id: 3, color: '#B8860B', isAI: false },
-  ],
-  videos: [
-    { id: 1, color: '#F5D060', isAI: true },
-    { id: 2, color: '#D4A017', isAI: false },
-  ],
-};
+import { useLiveQuery } from 'dexie-react-hooks';
+import { useUser } from '@clerk/nextjs';
+import { db, Post } from '../../db';
+import MediaItem from '../MediaItem';
+import { SettingsIcon, ShieldIcon, FileTextIcon, LogOutIcon } from '../icons';
+import PrivacyPolicy from '../PrivacyPolicy';
+import TermsConditions from '../TermsConditions';
 
 type ContentTab = 'posts' | 'shorts' | 'videos' | 'likes' | 'favorites';
 
 export default function ProfileTab() {
+  const { user } = useUser();
+  const userId = user?.id;
   const [activeContentTab, setActiveContentTab] = useState<ContentTab>('posts');
   const [showSettings, setShowSettings] = useState(false);
+  const [showPrivacy, setShowPrivacy] = useState(false);
+  const [showTerms, setShowTerms] = useState(false);
   const [profileShowAI, setProfileShowAI] = useState(true);
   const [profileShowNormal, setProfileShowNormal] = useState(true);
+
+  // Real data from Dexie — user's own posts
+  const userPosts = useLiveQuery(
+    async () => {
+      if (!userId) return [] as Post[];
+      return db.posts.where('userId').equals(userId).reverse().sortBy('timestamp');
+    },
+    [userId]
+  );
 
   const toggleProfileAI = () => {
     if (profileShowAI && !profileShowNormal) return;
@@ -51,13 +47,26 @@ export default function ProfileTab() {
     { key: 'favorites', label: 'Favorites' },
   ];
 
-  const rawContent = MOCK_CONTENT[activeContentTab as keyof typeof MOCK_CONTENT] || [];
-  const currentContent = rawContent.filter((item) => {
-    if (profileShowAI && profileShowNormal) return true;
-    if (profileShowAI && !profileShowNormal) return item.isAI;
-    if (!profileShowAI && profileShowNormal) return !item.isAI;
+  // Filter by content tab
+  const tabFiltered = (userPosts || []).filter((p: Post) => {
+    if (activeContentTab === 'posts') return p.mediaType === 'image';
+    if (activeContentTab === 'shorts') return p.mediaType === 'video' && (!p.videoType || p.videoType === 'short');
+    if (activeContentTab === 'videos') return p.mediaType === 'video' && p.videoType === 'long';
+    // likes and favorites — show all for now (post-launch feature)
     return true;
   });
+
+  // Filter by AI/Normal
+  const currentContent = tabFiltered.filter((p: Post) => {
+    if (profileShowAI && profileShowNormal) return true;
+    if (profileShowAI && !profileShowNormal) return p.is_ai;
+    if (!profileShowAI && profileShowNormal) return !p.is_ai;
+    return true;
+  });
+
+  const totalPosts = userPosts?.length || 0;
+  const displayName = user?.firstName || user?.username || 'You';
+  const avatarLetter = displayName[0]?.toUpperCase() || 'U';
 
   return (
     <div className="w-full max-w-[600px] mx-auto animate-fade-in">
@@ -65,13 +74,17 @@ export default function ProfileTab() {
       <div className="px-4 py-6">
         <div className="flex items-start gap-5">
           {/* Avatar */}
-          <div className="w-20 h-20 rounded-full bg-alu-surface flex items-center justify-center text-2xl font-bold text-alu-text-secondary shrink-0">
-            Y
+          <div className="w-20 h-20 rounded-full bg-alu-surface flex items-center justify-center shrink-0 overflow-hidden">
+            {user?.imageUrl ? (
+              <img src={user.imageUrl} alt={displayName} className="w-full h-full object-cover" />
+            ) : (
+              <span className="text-2xl font-bold text-alu-text-secondary">{avatarLetter}</span>
+            )}
           </div>
           {/* Stats */}
           <div className="flex-1">
             <div className="flex items-center gap-3 mb-2">
-              <h2 className="text-lg font-bold text-alu-text">yourname</h2>
+              <h2 className="text-lg font-bold text-alu-text">{displayName}</h2>
               <button
                 onClick={() => setShowSettings(!showSettings)}
                 className="text-alu-text-secondary hover:text-alu-text transition-colors"
@@ -81,19 +94,19 @@ export default function ProfileTab() {
             </div>
             <div className="flex gap-6 mb-3">
               <div className="text-center">
-                <span className="text-base font-bold text-alu-text block">24</span>
+                <span className="text-base font-bold text-alu-text block">{totalPosts}</span>
                 <span className="text-[11px] text-alu-text-tertiary">Posts</span>
               </div>
               <div className="text-center">
-                <span className="text-base font-bold text-alu-text block">1.2K</span>
+                <span className="text-base font-bold text-alu-text block">0</span>
                 <span className="text-[11px] text-alu-text-tertiary">Followers</span>
               </div>
               <div className="text-center">
-                <span className="text-base font-bold text-alu-text block">348</span>
+                <span className="text-base font-bold text-alu-text block">0</span>
                 <span className="text-[11px] text-alu-text-tertiary">Following</span>
               </div>
             </div>
-            <p className="text-sm text-alu-text-secondary">Creating with AI and having fun</p>
+            <p className="text-sm text-alu-text-secondary">Creating on Alu</p>
           </div>
         </div>
 
@@ -111,13 +124,19 @@ export default function ProfileTab() {
       {/* Settings dropdown */}
       {showSettings && (
         <div className="mx-4 mb-4 p-2 bg-alu-surface rounded-xl animate-fade-in">
-          <button className="w-full text-left px-3 py-2.5 text-sm text-alu-text hover:bg-alu-hover rounded-lg transition-colors flex items-center gap-2.5">
-            <SettingsIcon size={18} />
-            Settings
-          </button>
-          <button className="w-full text-left px-3 py-2.5 text-sm text-alu-text hover:bg-alu-hover rounded-lg transition-colors flex items-center gap-2.5">
-            <LockIcon size={18} />
+          <button
+            onClick={() => { setShowPrivacy(true); setShowSettings(false); }}
+            className="w-full text-left px-3 py-2.5 text-sm text-alu-text hover:bg-alu-hover rounded-lg transition-colors flex items-center gap-2.5"
+          >
+            <ShieldIcon size={18} />
             Privacy
+          </button>
+          <button
+            onClick={() => { setShowTerms(true); setShowSettings(false); }}
+            className="w-full text-left px-3 py-2.5 text-sm text-alu-text hover:bg-alu-hover rounded-lg transition-colors flex items-center gap-2.5"
+          >
+            <FileTextIcon size={18} />
+            Terms & Conditions
           </button>
           <button className="w-full text-left px-3 py-2.5 text-sm text-alu-danger hover:bg-alu-hover rounded-lg transition-colors flex items-center gap-2.5">
             <LogOutIcon size={18} />
@@ -125,6 +144,12 @@ export default function ProfileTab() {
           </button>
         </div>
       )}
+
+      {/* Privacy Policy overlay */}
+      {showPrivacy && <PrivacyPolicy onBack={() => setShowPrivacy(false)} />}
+
+      {/* Terms & Conditions overlay */}
+      {showTerms && <TermsConditions onBack={() => setShowTerms(false)} />}
 
       {/* Content Tabs */}
       <div className="border-b border-alu-border">
@@ -165,14 +190,14 @@ export default function ProfileTab() {
       {/* Content Grid */}
       <div className="grid grid-cols-3 gap-0.5 p-0.5">
         {currentContent.length > 0 ? (
-          currentContent.map((item) => (
+          currentContent.map((post) => (
             <div
-              key={item.id}
-              className="aspect-square relative"
-              style={{ background: `linear-gradient(135deg, ${item.color}33, ${item.color}77)` }}
+              key={post._id || post.id}
+              className="aspect-square relative overflow-hidden bg-alu-surface"
             >
-              {item.isAI && (
-                <div className="absolute top-1.5 left-1.5 text-[9px] font-bold px-1.5 py-0.5 rounded bg-black/40 text-white backdrop-blur-sm">
+              <MediaItem post={post} />
+              {post.is_ai && (
+                <div className="absolute top-1.5 left-1.5 text-[9px] font-bold px-1.5 py-0.5 rounded bg-black/40 text-white backdrop-blur-sm z-10">
                   AI
                 </div>
               )}
@@ -180,7 +205,9 @@ export default function ProfileTab() {
           ))
         ) : (
           <div className="col-span-3 py-16 text-center">
-            <p className="text-sm text-alu-text-tertiary">Nothing here yet</p>
+            <p className="text-sm text-alu-text-tertiary">
+              {!userPosts ? 'Loading...' : 'Nothing here yet'}
+            </p>
           </div>
         )}
       </div>

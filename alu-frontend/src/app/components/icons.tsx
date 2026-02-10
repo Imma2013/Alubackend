@@ -1,3 +1,50 @@
+// ========== ALU LOGO ==========
+export function AluLogo({ size = 28 }: { size?: number }) {
+  const h = size;
+  const w = size * 2.2;
+  return (
+    <svg width={w} height={h} viewBox="0 0 88 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+      {/* "a" letterform */}
+      <path
+        d="M18.5 30.5C13.5 30.5 9 27 9 22C9 17 13 13.5 18 13.5C20.5 13.5 22.5 14.5 24 16V14H29V30.5H24V28.5C22.5 30 20.5 30.5 18.5 30.5ZM19 26C22 26 24 24 24 22C24 20 22 18 19 18C16 18 14 20 14 22C14 24 16 26 19 26Z"
+        fill="#D4A017"
+      />
+      {/* "l" letterform */}
+      <path
+        d="M34 8H39V30.5H34V8Z"
+        fill="#D4A017"
+      />
+      {/* "u" letterform */}
+      <path
+        d="M44 14H49V24C49 26 50.5 27 52.5 27C54.5 27 56 26 56 24V14H61V24C61 28.5 57.5 31 52.5 31C47.5 31 44 28.5 44 24V14Z"
+        fill="#D4A017"
+      />
+      {/* Spark accent — the AI touch */}
+      <path
+        d="M65 6L67 10L71 8L69 12L73 14L69 16L71 20L67 18L65 22L63 18L59 20L61 16L57 14L61 12L59 8L63 10L65 6Z"
+        fill="#F5D060"
+        opacity="0.85"
+      />
+    </svg>
+  );
+}
+
+// ========== ICON MARK (compact, for favicon/small uses) ==========
+export function AluMark({ size = 24 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect width="40" height="40" rx="10" fill="#D4A017"/>
+      <path
+        d="M20 28C16 28 12.5 25 12.5 21C12.5 17 15.5 14 19.5 14C21.5 14 23 14.8 24 16V14.5H27.5V28H24V26.5C23 27.7 21.5 28 20 28ZM20 24.5C22.5 24.5 24 23 24 21C24 19 22.5 17.5 20 17.5C17.5 17.5 16 19 16 21C16 23 17.5 24.5 20 24.5Z"
+        fill="white"
+      />
+      {/* Spark */}
+      <circle cx="31" cy="10" r="3" fill="#F5D060"/>
+      <circle cx="31" cy="10" r="1.5" fill="white"/>
+    </svg>
+  );
+}
+
 export function HomeIcon({ active = false, size = 24 }: { active?: boolean; size?: number }) {
   return active ? (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor"><path d="M12 3l9 8h-3v9h-5v-6h-2v6H6v-9H3l9-8z"/></svg>
@@ -139,5 +186,17 @@ export function UsersIcon({ size = 20 }: { size?: number }) {
 export function LogOutIcon({ size = 20 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16,17 21,12 16,7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+  );
+}
+
+export function ShieldIcon({ size = 20 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+  );
+}
+
+export function FileTextIcon({ size = 20 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14,2 14,8 20,8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10,9 9,9 8,9"/></svg>
   );
 }
