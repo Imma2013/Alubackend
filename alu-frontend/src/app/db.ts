@@ -6,11 +6,16 @@ export interface Post {
   contentUrl: string;
   safePrompt: string;
   mediaType: 'image' | 'video';
+  videoType?: 'short' | 'long';
   is_ai: boolean;
+  isLongForm?: boolean;
   timestamp: Date;
   updatedAt?: Date; // For sync
   userId: string;
   synced?: number; // 0 = not synced, 1 = synced
+  thumbnailUrl?: string;
+  likes?: number;
+  originalPrompt?: string;
 }
 
 export interface SyncState {
@@ -24,7 +29,7 @@ export class AluDexie extends Dexie {
 
   constructor() {
     super('aluDatabase');
-    this.version(2).stores({ // Increment version for schema change
+    this.version(3).stores({
       posts: '++id, mediaType, timestamp, userId, synced, updatedAt', 
       syncState: 'id'
     });

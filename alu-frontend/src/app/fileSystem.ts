@@ -27,6 +27,25 @@ export async function saveFileFromUrl(url: string, suggestedName: string): Promi
 }
 
 /**
+ * Saves a Blob/File directly to OPFS (no network download needed).
+ * Used for user uploads where we already have the file in memory.
+ */
+export async function saveFileFromBlob(blob: Blob, suggestedName: string): Promise<FileSystemFileHandle> {
+  try {
+    const root = await navigator.storage.getDirectory();
+    const fileHandle = await root.getFileHandle(suggestedName, { create: true });
+    const writable = await fileHandle.createWritable();
+    await writable.write(blob);
+    await writable.close();
+    console.log(`File '${suggestedName}' saved to OPFS from blob.`);
+    return fileHandle;
+  } catch (error) {
+    console.error('Failed to save blob to OPFS:', error);
+    throw error;
+  }
+}
+
+/**
  * Gets a URL for a file stored in OPFS so it can be used in <img> or <video> tags.
  * @param {string} fileName - The name of the file to retrieve.
  * @returns {Promise<string>} A blob URL that can be used as a src.
