@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useAuth } from '@clerk/nextjs';
 import { ImageIcon, ZapIcon, FilmIcon, SparkleIcon, UploadIcon, GlobeIcon, LockIcon, UsersIcon } from '../icons';
 import { db } from '../../db';
@@ -19,11 +19,37 @@ export default function CreateTab() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
 
+  // Long video progress state
+  const [videoJobId, setVideoJobId] = useState<string | null>(null);
+  const [videoProgress, setVideoProgress] = useState(0);
+  const [videoStep, setVideoStep] = useState('');
+
   // Upload state
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const [isAI, setIsAI] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Real usage data
+  const [usage, setUsage] = useState<{ dailyImages: number; dailyShorts: number; dailyLongVids: number; limits: { image: number; short: number; long: number }; isPro: boolean } | null>(null);
+
+  useEffect(() => {
+    const fetchUsage = async () => {
+      try {
+        const token = await getToken();
+        if (!token) return;
+        const res = await fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3001'}/usage`, {
+          headers: { 'Authorization': `Bearer ${token}` },
+        });
+        if (res.ok) {
+          setUsage(await res.json());
+        }
+      } catch (e) {
+        console.error('Failed to fetch usage:', e);
+      }
+    };
+    fetchUsage();
+  }, [success]); // re-fetch after successful generation
 
   const types: { key: ContentType; label: string; desc: string; icon: React.ReactNode }[] = [
     { key: 'image', label: 'Image', desc: 'Up to 3 photos', icon: <ImageIcon size={24} /> },
@@ -85,6 +111,7 @@ export default function CreateTab() {
       if (selectedType === 'short') formData.append('videoType', 'short');
       if (selectedType === 'video') formData.append('videoType', 'long');
       formData.append('is_ai', isAI ? 'true' : 'false');
+      formData.append('visibility', privacy);
 
       const response = await fetch(
         `${process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3001'}/upload`,
@@ -134,55 +161,134 @@ export default function CreateTab() {
     setIsLoading(true);
     setError(null);
     setSuccess(false);
-
-    const body = {
-      prompt: prompt.trim(),
-      type: selectedType === 'image' ? 'image' : 'video',
-      isLongVideo: selectedType === 'video',
-    };
+    setVideoJobId(null);
+    setVideoProgress(0);
+    setVideoStep('');
 
     try {
       const token = await getToken();
       if (!token) throw new Error('You must be signed in to generate content.');
 
-      const response = await fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3001'}/generate`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-        },
-        body: JSON.stringify(body),
-      });
+      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3001';
 
-      if (!response.ok) {
-        const errData = await response.json();
-        throw new Error(errData.error || `Error: ${response.status}`);
-      }
-
-      const result = await response.json();
-
-      if (result.post && result.post.contentUrl) {
-        const fileExtension = result.post.mediaType === 'image' ? 'png' : 'mp4';
-        const fileName = `${result.post._id}.${fileExtension}`;
-
-        await saveFileFromUrl(result.post.contentUrl, fileName);
-
-        await db.posts.add({
-          ...result.post,
-          contentUrl: fileName,
-          synced: 1,
-          updatedAt: new Date(),
+      if (selectedType === 'video') {
+        // --- LONG VIDEO: use stitching pipeline ---
+        const res = await fetch(`${backendUrl}/generate/long-video`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            prompt: prompt.trim(),
+            durationSeconds: 300, // 5 minutes
+            visibility: privacy,
+          }),
         });
 
-        setSuccess(true);
-        setPrompt('');
-        setCaption('');
+        if (!res.ok) {
+          const errData = await res.json();
+          throw new Error(errData.error || `Error: ${res.status}`);
+        }
+
+        const { jobId } = await res.json();
+        setVideoJobId(jobId);
+        setVideoStep('Starting video generation...');
+
+        // Poll for progress
+        let complete = false;
+        while (!complete) {
+          await new Promise(resolve => setTimeout(resolve, 3000));
+          const statusRes = await fetch(`${backendUrl}/generate/status/${jobId}`, {
+            headers: { 'Authorization': `Bearer ${token}` },
+          });
+
+          if (!statusRes.ok) {
+            throw new Error('Failed to check generation status');
+          }
+
+          const status = await statusRes.json();
+          setVideoProgress(status.progress);
+          setVideoStep(status.currentStep);
+
+          if (status.status === 'complete') {
+            complete = true;
+            // Save to Dexie
+            if (status.videoUrl) {
+              const fileName = `${status.postId || Date.now()}.mp4`;
+              await saveFileFromUrl(status.videoUrl, fileName);
+              await db.posts.add({
+                _id: status.postId,
+                contentUrl: fileName,
+                safePrompt: prompt.trim(),
+                mediaType: 'video',
+                videoType: 'long',
+                is_ai: true,
+                isLongForm: true,
+                userId: '',
+                timestamp: new Date(),
+                synced: 1,
+                updatedAt: new Date(),
+                visibility: privacy as 'everyone' | 'followers' | 'private',
+                thumbnailUrl: status.thumbnailUrl,
+              });
+            }
+            setSuccess(true);
+            setPrompt('');
+            setCaption('');
+          } else if (status.status === 'failed') {
+            throw new Error(status.error || 'Video generation failed');
+          }
+        }
+      } else {
+        // --- IMAGE or SHORT: use regular /generate ---
+        const body = {
+          prompt: prompt.trim(),
+          type: selectedType === 'image' ? 'image' : 'video',
+          isLongVideo: false,
+          visibility: privacy,
+        };
+
+        const response = await fetch(`${backendUrl}/generate`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+          },
+          body: JSON.stringify(body),
+        });
+
+        if (!response.ok) {
+          const errData = await response.json();
+          throw new Error(errData.error || `Error: ${response.status}`);
+        }
+
+        const result = await response.json();
+
+        if (result.post && result.post.contentUrl) {
+          const fileExtension = result.post.mediaType === 'image' ? 'png' : 'mp4';
+          const fileName = `${result.post._id}.${fileExtension}`;
+
+          await saveFileFromUrl(result.post.contentUrl, fileName);
+
+          await db.posts.add({
+            ...result.post,
+            contentUrl: fileName,
+            synced: 1,
+            updatedAt: new Date(),
+          });
+
+          setSuccess(true);
+          setPrompt('');
+          setCaption('');
+        }
       }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Something went wrong';
       setError(message);
     } finally {
       setIsLoading(false);
+      setVideoJobId(null);
     }
   };
 
@@ -197,11 +303,10 @@ export default function CreateTab() {
           <button
             key={t.key}
             onClick={() => { setSelectedType(t.key); clearFile(); }}
-            className={`flex flex-col items-center gap-2 p-4 rounded-xl border-2 transition-all duration-200 ${
-              selectedType === t.key
-                ? 'border-[var(--alu-primary)] bg-[var(--alu-primary-glow)]'
-                : 'border-alu-border hover:border-alu-text-tertiary bg-white'
-            }`}
+            className={`flex flex-col items-center gap-2 p-4 rounded-xl border-2 transition-all duration-200 ${selectedType === t.key
+              ? 'border-[var(--alu-primary)] bg-[var(--alu-primary-glow)]'
+              : 'border-alu-border hover:border-alu-text-tertiary bg-white'
+              }`}
           >
             <span className={selectedType === t.key ? 'text-[var(--alu-primary-dark)]' : 'text-alu-text-secondary'}>{t.icon}</span>
             <span className={`text-sm font-semibold ${selectedType === t.key ? 'text-[var(--alu-primary-dark)]' : 'text-alu-text'}`}>
@@ -216,17 +321,15 @@ export default function CreateTab() {
       <div className="flex bg-alu-surface rounded-xl p-1 mb-6">
         <button
           onClick={() => setMode('upload')}
-          className={`flex-1 py-2.5 rounded-lg text-sm font-semibold transition-all duration-200 flex items-center justify-center gap-2 ${
-            mode === 'upload' ? 'bg-white text-alu-text shadow-sm' : 'text-alu-text-tertiary hover:text-alu-text-secondary'
-          }`}
+          className={`flex-1 py-2.5 rounded-lg text-sm font-semibold transition-all duration-200 flex items-center justify-center gap-2 ${mode === 'upload' ? 'bg-white text-alu-text shadow-sm' : 'text-alu-text-tertiary hover:text-alu-text-secondary'
+            }`}
         >
           <UploadIcon size={16} /> Upload
         </button>
         <button
           onClick={() => setMode('ai')}
-          className={`flex-1 py-2.5 rounded-lg text-sm font-semibold transition-all duration-200 flex items-center justify-center gap-2 ${
-            mode === 'ai' ? 'bg-white text-alu-text shadow-sm' : 'text-alu-text-tertiary hover:text-alu-text-secondary'
-          }`}
+          className={`flex-1 py-2.5 rounded-lg text-sm font-semibold transition-all duration-200 flex items-center justify-center gap-2 ${mode === 'ai' ? 'bg-white text-alu-text shadow-sm' : 'text-alu-text-tertiary hover:text-alu-text-secondary'
+            }`}
         >
           <SparkleIcon size={16} /> AI Generate
         </button>
@@ -269,7 +372,7 @@ export default function CreateTab() {
                 onClick={clearFile}
                 className="absolute top-2 right-2 w-8 h-8 rounded-full bg-black/60 text-white flex items-center justify-center hover:bg-black/80 transition-colors"
               >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
               </button>
               <div className="absolute bottom-2 left-2 text-[11px] bg-black/60 text-white px-2 py-1 rounded">
                 {(file.size / (1024 * 1024)).toFixed(1)}MB
@@ -286,14 +389,21 @@ export default function CreateTab() {
               selectedType === 'image'
                 ? 'Describe the image you want to create...'
                 : selectedType === 'short'
-                ? 'Describe your short video concept...'
-                : 'Describe your video idea...'
+                  ? 'Describe your short video concept...'
+                  : 'Describe your video idea...'
             }
             className="w-full h-28 p-4 bg-alu-surface rounded-xl text-sm text-alu-text placeholder:text-alu-text-tertiary outline-none resize-none focus:ring-2 focus:ring-[var(--alu-primary-glow)] transition-shadow"
           />
           <div className="flex justify-end mt-2">
             <span className="text-[11px] text-alu-text-tertiary">
-              {selectedType === 'image' ? '3 left today' : selectedType === 'short' ? '2 left today' : '1 left today'} · Free tier
+              {usage ? (
+                selectedType === 'image'
+                  ? `${Math.max(0, usage.limits.image - usage.dailyImages)} left today`
+                  : selectedType === 'short'
+                    ? `${Math.max(0, usage.limits.short - usage.dailyShorts)} left today`
+                    : `${Math.max(0, usage.limits.long - usage.dailyLongVids)} left today`
+              ) : 'Loading...'}
+              {' · '}{usage?.isPro ? 'Pro' : 'Free tier'}
             </span>
           </div>
         </div>
@@ -304,11 +414,10 @@ export default function CreateTab() {
         <div className="mb-6">
           <button
             onClick={() => setIsAI(!isAI)}
-            className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium transition-all ${
-              isAI
-                ? 'bg-[var(--alu-primary-glow)] text-[var(--alu-primary-dark)] border border-[var(--alu-primary)]'
-                : 'bg-alu-surface text-alu-text-secondary border border-transparent hover:border-alu-border'
-            }`}
+            className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium transition-all ${isAI
+              ? 'bg-[var(--alu-primary-glow)] text-[var(--alu-primary-dark)] border border-[var(--alu-primary)]'
+              : 'bg-alu-surface text-alu-text-secondary border border-transparent hover:border-alu-border'
+              }`}
           >
             <SparkleIcon size={14} />
             AI Generated
@@ -334,17 +443,36 @@ export default function CreateTab() {
           <button
             key={opt.value}
             onClick={() => setPrivacy(opt.value)}
-            className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition-all ${
-              privacy === opt.value
-                ? 'bg-[var(--alu-primary-glow)] text-[var(--alu-primary-dark)] border border-[var(--alu-primary)]'
-                : 'bg-alu-surface text-alu-text-secondary border border-transparent hover:border-alu-border'
-            }`}
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition-all ${privacy === opt.value
+              ? 'bg-[var(--alu-primary-glow)] text-[var(--alu-primary-dark)] border border-[var(--alu-primary)]'
+              : 'bg-alu-surface text-alu-text-secondary border border-transparent hover:border-alu-border'
+              }`}
           >
             {opt.icon}
             {opt.label}
           </button>
         ))}
       </div>
+
+      {/* Video Generation Progress */}
+      {videoJobId && isLoading && (
+        <div className="mb-6 p-4 bg-alu-surface rounded-xl animate-fade-in">
+          <div className="flex justify-between items-center mb-2">
+            <span className="text-xs font-semibold text-alu-text">Generating Video</span>
+            <span className="text-xs font-bold text-[var(--alu-primary)]">{videoProgress}%</span>
+          </div>
+          <div className="w-full h-2 bg-alu-border rounded-full overflow-hidden">
+            <div
+              className="h-full rounded-full transition-all duration-500 ease-out"
+              style={{
+                width: `${videoProgress}%`,
+                background: 'linear-gradient(90deg, var(--alu-primary), var(--alu-primary-light))',
+              }}
+            />
+          </div>
+          <p className="text-[11px] text-alu-text-tertiary mt-2">{videoStep}</p>
+        </div>
+      )}
 
       {/* Error / Success */}
       {error && <p className="text-sm text-[var(--alu-danger)] mb-4">{error}</p>}

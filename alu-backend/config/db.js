@@ -16,15 +16,18 @@ const UserSchema = new mongoose.Schema({
 const PostSchema = new mongoose.Schema({
   userId: { type: String, required: true },
   contentUrl: { type: String, required: true },
-  safePrompt: { type: String, required: true },
+  safePrompt: { type: String, default: '' },
   originalPrompt: { type: String },
+  caption: { type: String, default: '' },
   is_ai: { type: Boolean, default: true },
-  mediaType: { type: String, enum: ['image', 'video'], required: true }, // mapped from user input 'type'
-  videoType: { type: String, enum: ['short', 'long'] }, // extra detail if video
+  mediaType: { type: String, enum: ['image', 'video'], required: true },
+  videoType: { type: String, enum: ['short', 'long'] },
   timestamp: { type: Date, default: Date.now },
   likes: { type: Number, default: 0 },
   isLongForm: { type: Boolean, default: false },
-  thumbnailUrl: { type: String }
+  thumbnailUrl: { type: String },
+  visibility: { type: String, enum: ['everyone', 'followers', 'private'], default: 'everyone' },
+  status: { type: String, enum: ['ready', 'pending', 'failed'], default: 'ready' }
 }, { timestamps: true });
 
 const User = mongoose.model('User', UserSchema);

@@ -118,7 +118,7 @@ export default function App() {
                     onClick={() => { setSearchOpen(false); setSearchQuery(''); }}
                     className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[var(--alu-text-tertiary)] hover:text-[var(--alu-text)]"
                   >
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
                   </button>
                 </div>
               ) : (
@@ -160,14 +160,12 @@ export default function App() {
             className={`relative p-1.5 shrink-0 transition-colors ${activeTab === 'notifications' ? 'text-[var(--alu-primary)]' : 'text-[var(--alu-text-secondary)] hover:text-[var(--alu-text)]'}`}
           >
             <NotificationsIcon size={20} active={activeTab === 'notifications'} />
-            <div className="absolute top-0.5 right-0.5 w-2 h-2 rounded-full bg-[var(--alu-danger)]" />
           </button>
           <button
             onClick={() => setActiveTab('messages')}
             className={`relative p-1.5 shrink-0 transition-colors ${activeTab === 'messages' ? 'text-[var(--alu-primary)]' : 'text-[var(--alu-text-secondary)] hover:text-[var(--alu-text)]'}`}
           >
             <MessagesIcon size={20} active={activeTab === 'messages'} />
-            <div className="absolute top-0.5 right-0.5 w-2 h-2 rounded-full bg-[var(--alu-primary)]" />
           </button>
         </div>
       </header>
@@ -189,20 +187,13 @@ export default function App() {
               <button
                 key={item.key}
                 onClick={() => setActiveTab(item.key)}
-                className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200 w-full text-left ${
-                  isActive
+                className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200 w-full text-left ${isActive
                     ? 'bg-[var(--alu-primary-glow)] text-[var(--alu-primary-dark)] font-semibold'
                     : 'text-[var(--alu-text-secondary)] hover:bg-[var(--alu-hover)] hover:text-[var(--alu-text)]'
-                }`}
+                  }`}
               >
                 <span className={isActive ? 'text-[var(--alu-primary)]' : ''}>{item.icon(isActive)}</span>
                 {item.label}
-                {item.key === 'notifications' && (
-                  <div className="w-2 h-2 rounded-full bg-[var(--alu-danger)] ml-auto" />
-                )}
-                {item.key === 'messages' && (
-                  <span className="ml-auto text-[11px] font-bold bg-[var(--alu-primary)] text-white w-5 h-5 rounded-full flex items-center justify-center">4</span>
-                )}
               </button>
             );
           })}
@@ -259,7 +250,7 @@ export default function App() {
                   onClick={() => { setSearchOpen(false); setSearchQuery(''); }}
                   className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--alu-text-tertiary)] hover:text-[var(--alu-text)]"
                 >
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
                 </button>
               </div>
             ) : (
@@ -324,9 +315,8 @@ export default function App() {
               <button
                 key={item.key}
                 onClick={() => setActiveTab(item.key)}
-                className={`flex flex-col items-center justify-center gap-0.5 py-1 px-3 transition-colors duration-200 ${
-                  isActive ? 'text-[var(--alu-primary)]' : 'text-[var(--alu-text-tertiary)]'
-                }`}
+                className={`flex flex-col items-center justify-center gap-0.5 py-1 px-3 transition-colors duration-200 ${isActive ? 'text-[var(--alu-primary)]' : 'text-[var(--alu-text-tertiary)]'
+                  }`}
               >
                 {item.icon(isActive)}
                 <span className={`text-[10px] ${isActive ? 'font-semibold' : 'font-medium'}`}>{item.label}</span>

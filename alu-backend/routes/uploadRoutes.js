@@ -29,7 +29,7 @@ const upload = multer({
  */
 router.post('/', clerkAuth, upload.single('file'), async (req, res) => {
   const userId = req.auth.sub;
-  const { caption, mediaType, videoType } = req.body;
+  const { caption, mediaType, videoType, visibility } = req.body;
 
   if (!req.file) {
     return res.status(400).json({ error: 'No file uploaded' });
@@ -69,13 +69,15 @@ router.post('/', clerkAuth, upload.single('file'), async (req, res) => {
     const post = await Post.create({
       userId,
       contentUrl: cloudResult.secure_url,
+      caption: caption || '',
       safePrompt: caption || 'User upload',
       originalPrompt: caption || '',
-      is_ai: req.body.is_ai === 'true',
+      is_ai: false,
       mediaType,
       videoType: mediaType === 'video' ? (videoType || 'short') : undefined,
       isLongForm: videoType === 'long',
       thumbnailUrl: cloudResult.eager?.[0]?.secure_url || null,
+      visibility: visibility || 'everyone',
     });
 
     res.status(201).json({ success: true, post });

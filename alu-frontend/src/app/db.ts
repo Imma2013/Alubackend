@@ -16,6 +16,8 @@ export interface Post {
   thumbnailUrl?: string;
   likes?: number;
   originalPrompt?: string;
+  caption?: string;
+  visibility?: 'everyone' | 'followers' | 'private';
 }
 
 export interface SyncState {
@@ -24,13 +26,13 @@ export interface SyncState {
 }
 
 export class AluDexie extends Dexie {
-  posts!: Table<Post>; 
+  posts!: Table<Post>;
   syncState!: Table<SyncState>;
 
   constructor() {
     super('aluDatabase');
     this.version(3).stores({
-      posts: '++id, mediaType, timestamp, userId, synced, updatedAt', 
+      posts: '++id, mediaType, timestamp, userId, synced, updatedAt',
       syncState: 'id'
     });
   }

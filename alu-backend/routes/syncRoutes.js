@@ -8,16 +8,15 @@ const clerkAuth = require('../middleware/clerkAuth');
 // Public access for the feed
 router.post('/pull', async (req, res) => {
   const { lastSyncTime } = req.body;
-  
+
   try {
-    let query = {};
+    let query = { visibility: { $in: ['everyone', undefined] } };
     if (lastSyncTime) {
       query.updatedAt = { $gt: new Date(lastSyncTime) };
     }
 
-    // Get posts sorted by newest
     const changes = await Post.find(query).sort({ updatedAt: 1 }).limit(100);
-    
+
     res.json({
       changes,
       timestamp: new Date().toISOString()
@@ -48,14 +47,14 @@ router.post('/push', clerkAuth, async (req, res) => {
       // Upsert: Update if exists, Insert if new
       // We use the Dexie 'id' (if it matches _id) or create new
       const { _id, ...updateData } = postData;
-      
+
       if (_id && _id.length === 24) { // Valid ObjectId length
-         await Post.findByIdAndUpdate(_id, updateData, { upsert: true, new: true });
+        await Post.findByIdAndUpdate(_id, updateData, { upsert: true, new: true });
       } else {
-         // It's a purely local post, create it (Mongo will generate _id)
-         // Note: In a real offline-first app, we'd use UUIDs to avoid this mapping issue.
-         // For now, we assume these are valid posts.
-         await Post.create(updateData);
+        // It's a purely local post, create it (Mongo will generate _id)
+        // Note: In a real offline-first app, we'd use UUIDs to avoid this mapping issue.
+        // For now, we assume these are valid posts.
+        await Post.create(updateData);
       }
       processed++;
     }

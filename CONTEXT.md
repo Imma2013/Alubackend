@@ -32,9 +32,11 @@ alu-frontend/   (Next.js + Tailwind) — ON VERCEL, DEPLOYED (alu-teal-pi.vercel
 - PostHog (analytics)
 
 ### AI Services
-- NanoBanana/Gemini (images)
-- Veo (shorts/videos)
-- Gemini Flash as orchestrator/prompt cleaner (conductor.js)
+- NanoBanana Pro / `gemini-3-pro-image-preview` (images — via Gemini API generateContent)
+- Veo 3.1 / `veo-3.1-generate-preview` (shorts — via Gemini API generateVideos)
+- Sora 2 via piapi.ai (long video clips — storyboard mode, falls back to Veo 3.1)
+- Gemini Flash 2.0 as orchestrator/prompt cleaner + scene splitter (conductor.js)
+- FFmpeg via ffmpeg-static (video stitching/concatenation)
 
 ## Daily Limits (Freemium)
 | Content Type | Free Tier |
@@ -327,6 +329,62 @@ NEXT_PUBLIC_BACKEND_URL=<render backend url>
 
 **Build:** passes clean on Next.js 16 + TypeScript
 
+### 2026-02-10: Fix Everything + Video Stitching — Session 6 (Antigravity)
+
+**Phase 0 — Restored Missing Frontend Scaffolding:**
+- 8 critical files were missing from git (never committed): package.json, layout.tsx, globals.css, syncService.ts, tsconfig.json, next.config.ts, postcss.config.mjs, eslint.config.mjs
+- Copied from Claude worktree, added NEXT_PUBLIC_BACKEND_URL to .env.local
+- npm install + npm run build passes
+
+**Phase 1 — Fixed Broken UI Features:**
+- Log Out: added `signOut()` handler via `useClerk()` in ProfileTab.tsx
+- Edit Profile: NEW EditProfile.tsx overlay — edit display name, bio (stored in Clerk unsafeMetadata), profile photo upload
+- Share Profile: copies profile link to clipboard with "Copied!" toast
+- Removed 4 fake notification/message badges from page.tsx (mobile + desktop)
+- Profile shows real bio from Clerk `unsafeMetadata.bio`
+
+**Phase 2 — Fixed AI Generation (conductor.js rewrite):**
+- Images: NanoBanana Pro (`gemini-3-pro-image-preview`) via `generateContent` with `responseModalities: ['IMAGE']` → base64 → Cloudinary upload
+- Shorts: Veo 3.1 (`veo-3.1-generate-preview`) via `generateVideos` → async polling → Cloudinary upload
+- Long videos: redirects to stitching pipeline (POST /generate/long-video)
+- Added `visibility` field to PostSchema (everyone/followers/private)
+- Added `caption`, `status` fields to PostSchema
+- Privacy/visibility wired end-to-end: CreateTab → backend → database → feed filtering
+- NEW: GET /usage endpoint — returns real daily usage counts + limits
+- CreateTab shows real remaining counts (not hardcoded)
+- Sync pull now filters by visibility: 'everyone' only
+- Feed endpoint filters by visibility: 'everyone' only
+
+**Phase 3 — 5-Minute Video Stitching Pipeline:**
+- NEW: services/videoJobs.js — in-memory job queue with status tracking (queued → splitting_scenes → generating_clips → stitching → uploading → complete/failed)
+- NEW: services/videoStitcher.js — full pipeline:
+  1. Gemini Flash splits prompt into N scene descriptions
+  2. Sora 2 (piapi.ai) generates each 8s clip (falls back to Veo 3.1)
+  3. FFmpeg (via ffmpeg-static npm package) concatenates clips
+  4. Cloudinary uploads final video
+- NEW: POST /generate/long-video — creates background job, returns jobId
+- NEW: GET /generate/status/:jobId — real-time progress polling (auth-protected)
+- CreateTab: long video mode uses polling with visual progress bar (percentage + step label)
+- Installed: uuid, ffmpeg-static
+
+**New Files:**
+- alu-frontend/src/app/components/EditProfile.tsx
+- alu-backend/services/videoJobs.js
+- alu-backend/services/videoStitcher.js
+
+**Modified Files:**
+- alu-backend/services/conductor.js (full rewrite — NanoBanana Pro + Veo 3.1)
+- alu-backend/config/db.js (PostSchema: visibility, caption, status)
+- alu-backend/server.js (usage endpoint, long-video endpoints, visibility filtering)
+- alu-backend/routes/uploadRoutes.js (visibility + caption)
+- alu-backend/routes/syncRoutes.js (visibility-filtered pull)
+- alu-frontend/src/app/page.tsx (removed fake badges)
+- alu-frontend/src/app/db.ts (Post interface: visibility, caption)
+- alu-frontend/src/app/components/tabs/ProfileTab.tsx (signOut, edit profile, share, real bio)
+- alu-frontend/src/app/components/tabs/CreateTab.tsx (visibility, usage, long video progress)
+
+**Build:** Frontend passes `npm run build`, backend passes all syntax checks
+
 ### NEXT SESSION PRIORITIES:
 1. **Follow/Friend system**: Follow schema in MongoDB, follow/unfollow endpoints, Follow button on profiles, real follower/following counts
 2. **User profile viewing**: Tap someone's avatar in feed/shorts to see their profile + Follow button
@@ -335,6 +393,5 @@ NEXT_PUBLIC_BACKEND_URL=<render backend url>
 5. **Content sharing/links**: Copy link to share content anywhere on the platform and externally
 6. **Stripe Pro upgrade**: $10/month, wire webhook to actually upgrade user isPro status
 7. **Stories**: Upload photo stories (from camera roll), plus button on profile pic, swipe through
-8. **Video stitching**: Chain 8s Veo clips for 1-5 min videos (FFmpeg on backend)
-9. **PWA manifest + service worker**
-10. **Likes/comments/share wired to backend**
+8. **PWA manifest + service worker**
+9. **Likes/comments/share wired to backend**

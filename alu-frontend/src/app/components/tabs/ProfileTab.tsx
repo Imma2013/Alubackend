@@ -2,24 +2,28 @@
 
 import { useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { useUser } from '@clerk/nextjs';
+import { useUser, useClerk } from '@clerk/nextjs';
 import { db, Post } from '../../db';
 import MediaItem from '../MediaItem';
 import { SettingsIcon, ShieldIcon, FileTextIcon, LogOutIcon } from '../icons';
 import PrivacyPolicy from '../PrivacyPolicy';
 import TermsConditions from '../TermsConditions';
+import EditProfile from '../EditProfile';
 
 type ContentTab = 'posts' | 'shorts' | 'videos' | 'likes' | 'favorites';
 
 export default function ProfileTab() {
   const { user } = useUser();
+  const { signOut } = useClerk();
   const userId = user?.id;
   const [activeContentTab, setActiveContentTab] = useState<ContentTab>('posts');
   const [showSettings, setShowSettings] = useState(false);
   const [showPrivacy, setShowPrivacy] = useState(false);
   const [showTerms, setShowTerms] = useState(false);
+  const [showEditProfile, setShowEditProfile] = useState(false);
   const [profileShowAI, setProfileShowAI] = useState(true);
   const [profileShowNormal, setProfileShowNormal] = useState(true);
+  const [copiedLink, setCopiedLink] = useState(false);
 
   // Real data from Dexie — user's own posts
   const userPosts = useLiveQuery(
@@ -67,6 +71,26 @@ export default function ProfileTab() {
   const totalPosts = userPosts?.length || 0;
   const displayName = user?.firstName || user?.username || 'You';
   const avatarLetter = displayName[0]?.toUpperCase() || 'U';
+  const userBio = (user?.unsafeMetadata?.bio as string) || 'Creating on Alu';
+
+  const handleShareProfile = async () => {
+    const profileUrl = `${window.location.origin}/profile/${user?.id || ''}`;
+    try {
+      await navigator.clipboard.writeText(profileUrl);
+      setCopiedLink(true);
+      setTimeout(() => setCopiedLink(false), 2000);
+    } catch {
+      // Fallback for older browsers
+      const textarea = document.createElement('textarea');
+      textarea.value = profileUrl;
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand('copy');
+      document.body.removeChild(textarea);
+      setCopiedLink(true);
+      setTimeout(() => setCopiedLink(false), 2000);
+    }
+  };
 
   return (
     <div className="w-full max-w-[600px] mx-auto animate-fade-in">
@@ -106,17 +130,23 @@ export default function ProfileTab() {
                 <span className="text-[11px] text-alu-text-tertiary">Following</span>
               </div>
             </div>
-            <p className="text-sm text-alu-text-secondary">Creating on Alu</p>
+            <p className="text-sm text-alu-text-secondary">{userBio}</p>
           </div>
         </div>
 
         {/* Action Buttons */}
         <div className="flex gap-2 mt-4">
-          <button className="flex-1 py-2 rounded-lg text-sm font-semibold bg-alu-surface text-alu-text hover:bg-alu-border transition-colors">
+          <button
+            onClick={() => setShowEditProfile(true)}
+            className="flex-1 py-2 rounded-lg text-sm font-semibold bg-alu-surface text-alu-text hover:bg-alu-border transition-colors"
+          >
             Edit Profile
           </button>
-          <button className="flex-1 py-2 rounded-lg text-sm font-semibold bg-alu-surface text-alu-text hover:bg-alu-border transition-colors">
-            Share Profile
+          <button
+            onClick={handleShareProfile}
+            className="flex-1 py-2 rounded-lg text-sm font-semibold bg-alu-surface text-alu-text hover:bg-alu-border transition-colors"
+          >
+            {copiedLink ? 'Copied!' : 'Share Profile'}
           </button>
         </div>
       </div>
@@ -138,7 +168,10 @@ export default function ProfileTab() {
             <FileTextIcon size={18} />
             Terms & Conditions
           </button>
-          <button className="w-full text-left px-3 py-2.5 text-sm text-alu-danger hover:bg-alu-hover rounded-lg transition-colors flex items-center gap-2.5">
+          <button
+            onClick={() => signOut()}
+            className="w-full text-left px-3 py-2.5 text-sm text-alu-danger hover:bg-alu-hover rounded-lg transition-colors flex items-center gap-2.5"
+          >
             <LogOutIcon size={18} />
             Log Out
           </button>
@@ -151,6 +184,9 @@ export default function ProfileTab() {
       {/* Terms & Conditions overlay */}
       {showTerms && <TermsConditions onBack={() => setShowTerms(false)} />}
 
+      {/* Edit Profile overlay */}
+      {showEditProfile && <EditProfile onBack={() => setShowEditProfile(false)} />}
+
       {/* Content Tabs */}
       <div className="border-b border-alu-border">
         <div className="flex overflow-x-auto hide-scrollbar">
@@ -158,11 +194,10 @@ export default function ProfileTab() {
             <button
               key={tab.key}
               onClick={() => setActiveContentTab(tab.key)}
-              className={`flex-1 min-w-[80px] py-3 text-xs font-semibold text-center transition-all duration-200 border-b-2 ${
-                activeContentTab === tab.key
+              className={`flex-1 min-w-[80px] py-3 text-xs font-semibold text-center transition-all duration-200 border-b-2 ${activeContentTab === tab.key
                   ? 'border-[var(--alu-primary)] text-[var(--alu-primary-dark)]'
                   : 'border-transparent text-alu-text-tertiary hover:text-alu-text-secondary'
-              }`}
+                }`}
             >
               {tab.label}
             </button>
