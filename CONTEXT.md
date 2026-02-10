@@ -262,17 +262,43 @@ NEXT_PUBLIC_BACKEND_URL=<render backend url>
 - User feedback: 6 positive reviews from testers, 2 people lined up to upload real videos
 - Frontend deployed on Vercel at alu-teal-pi.vercel.app
 
+### 2026-02-09: LAUNCH DAY — Session 4 (Claude Opus)
+**Backend:**
+- NEW: POST /upload endpoint (Cloudinary + Multer) — users can upload photos/videos up to 100MB
+- Cloudinary: auto CDN delivery, video thumbnails via eager transform, 25GB free tier
+- Simple rate limiter (10 req/min per IP) on upload endpoint
+- Added thumbnailUrl to PostSchema
+- Installed: multer, cloudinary
+
+**Frontend — Real Data:**
+- HomeTab: replaced ALL mock posts with real Dexie live queries (useLiveQuery)
+- HomeTab: syncs on mount + every 60s (pullChanges + pushChanges)
+- HomeTab: receives showAI/showNormal props from page.tsx — filtering works
+- ProfileTab: shows user's OWN posts from Dexie, filtered by userId from Clerk
+- ProfileTab: uses Clerk useUser() for real name, avatar, post count
+- CreateTab: Upload mode fully wired — file picker, preview, FormData POST to /upload, saves to OPFS + Dexie
+- MediaItem: handles both OPFS local files (own content) and Cloudinary URLs (synced content from others)
+- Added saveFileFromBlob() to fileSystem.ts for direct File-to-OPFS save
+
+**UX/Design:**
+- SVG logo: AluLogo component (wordmark with spark accent) + AluMark (compact icon mark)
+- ShortsTab: vertical swipe gestures (touch start/move/end) like TikTok + mouse wheel on desktop
+- Profile tab: search bar + AI/Normal toggles hidden in header (Instagram behavior)
+- Dexie schema v3: added videoType, thumbnailUrl, likes, originalPrompt to Post interface
+
+**Deployed:**
+- Frontend pushed to Alufrontend.git main → Vercel auto-deploy
+- Backend pushed to Alubackend.git main → Render auto-deploy
+- User needs to add Cloudinary env vars on Render: CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET
+
 ### NEXT SESSION PRIORITIES:
-1. **BACKEND: Real upload pipeline** — 2 real users want to upload videos NOW
-   - File upload endpoint (multipart/form-data → cloud storage or chunked upload)
-   - Video processing pipeline (transcode, thumbnail generation)
-   - Consider ffmpeg.wasm client-side for lightweight processing
-   - Content metadata storage in MongoDB
-2. Pass showAI/showNormal props from page.tsx to HomeTab to actually filter feed content
-3. Replace HomeTab mock data with real Dexie Feed.tsx queries
-4. Connect search to actually work (search across posts, users, etc.)
-5. Add image cropping on upload (simple, like Instagram)
-6. Test Create tab end-to-end (make sure backend /generate endpoint responds)
-7. Remove or replace mock data with real content (real users are starting to use it)
-8. PWA manifest + service worker (app store bypass)
-9. Test on mobile device
+1. **Test end-to-end**: Upload a real photo, verify it appears in feed for other users
+2. **Privacy statement**: User needs to draft before wide launch (REMIND THEM)
+3. Connect search to actually work (search across posts, users)
+4. Add image cropping on upload (simple, like Instagram)
+5. PWA manifest + service worker (app store bypass)
+6. Wire ShortsTab + VideosTab to real Dexie data (currently mock)
+7. Long video async generation (Veo/Sora polling pattern for 10+ min videos)
+8. Likes/comments/share wired to backend (currently local state only)
+9. Real-time messaging (post-launch)
+10. Stripe webhook completion (user upgrade to Pro on payment)
