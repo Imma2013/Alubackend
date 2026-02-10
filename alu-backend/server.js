@@ -9,6 +9,7 @@ const initCreditGuard = require('./utils/creditGuard');
 const { generateContent } = require('./services/conductor');
 const paymentRoutes = require('./routes/paymentRoutes');
 const syncRoutes = require('./routes/syncRoutes');
+const uploadRoutes = require('./routes/uploadRoutes');
 const clerkAuth = require('./middleware/clerkAuth');
 
 const app = express();
@@ -26,9 +27,26 @@ app.use(cors());
 app.use(helmet());
 app.use(morgan('dev'));
 
+// Simple rate limiter for uploads (10 req/min per IP)
+const uploadRateLimit = new Map();
+const rateLimitUpload = (req, res, next) => {
+  const ip = req.ip;
+  const now = Date.now();
+  const windowMs = 60000;
+  const maxRequests = 10;
+  const requests = (uploadRateLimit.get(ip) || []).filter(t => now - t < windowMs);
+  if (requests.length >= maxRequests) {
+    return res.status(429).json({ error: 'Too many uploads. Please try again later.' });
+  }
+  requests.push(now);
+  uploadRateLimit.set(ip, requests);
+  next();
+};
+
 // Routes
 app.use('/payments', paymentRoutes);
 app.use('/sync', syncRoutes);
+app.use('/upload', rateLimitUpload, uploadRoutes);
 
 // This route is now protected. A valid Clerk token is required.
 app.post('/generate', clerkAuth, async (req, res) => {
