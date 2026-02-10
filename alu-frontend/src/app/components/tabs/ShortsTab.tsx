@@ -1,0 +1,189 @@
+'use client';
+
+import { useState, useRef, useCallback } from 'react';
+import { useLiveQuery } from 'dexie-react-hooks';
+import { db, Post } from '../../db';
+import MediaItem from '../MediaItem';
+import { HeartIcon, CommentIcon, ShareIcon, BookmarkIcon, ShortsIcon } from '../icons';
+
+export default function ShortsTab() {
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [liked, setLiked] = useState<Set<string>>(new Set());
+  const [swipeOffset, setSwipeOffset] = useState(0);
+  const [isSwiping, setIsSwiping] = useState(false);
+  const touchStartY = useRef(0);
+  const touchStartTime = useRef(0);
+
+  // Real data from Dexie — shorts
+  const shorts = useLiveQuery(
+    async () => {
+      const all = await db.posts.where('mediaType').equals('video').toArray();
+      return all
+        .filter((p: Post) => !p.videoType || p.videoType === 'short')
+        .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+    },
+    []
+  );
+
+  const shortsList = shorts || [];
+  const short = shortsList[currentIndex];
+
+  const toggleLike = () => {
+    if (!short) return;
+    const key = short._id || String(short.id);
+    setLiked(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
+  const goNext = useCallback(() => {
+    if (currentIndex < shortsList.length - 1) setCurrentIndex(prev => prev + 1);
+  }, [currentIndex, shortsList.length]);
+
+  const goPrev = useCallback(() => {
+    if (currentIndex > 0) setCurrentIndex(prev => prev - 1);
+  }, [currentIndex]);
+
+  // Touch handlers for vertical swipe (TikTok style)
+  const handleTouchStart = (e: React.TouchEvent) => {
+    touchStartY.current = e.touches[0].clientY;
+    touchStartTime.current = Date.now();
+    setIsSwiping(true);
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    if (!isSwiping) return;
+    const deltaY = e.touches[0].clientY - touchStartY.current;
+    const canGoUp = currentIndex < shortsList.length - 1;
+    const canGoDown = currentIndex > 0;
+    if (deltaY < 0 && !canGoUp) {
+      setSwipeOffset(deltaY * 0.2);
+    } else if (deltaY > 0 && !canGoDown) {
+      setSwipeOffset(deltaY * 0.2);
+    } else {
+      setSwipeOffset(deltaY * 0.5);
+    }
+  };
+
+  const handleTouchEnd = () => {
+    setIsSwiping(false);
+    const elapsed = Date.now() - touchStartTime.current;
+    const velocity = Math.abs(swipeOffset) / elapsed;
+
+    if (swipeOffset < -50 || (swipeOffset < -20 && velocity > 0.3)) {
+      goNext();
+    } else if (swipeOffset > 50 || (swipeOffset > 20 && velocity > 0.3)) {
+      goPrev();
+    }
+    setSwipeOffset(0);
+  };
+
+  const handleWheel = useCallback((e: React.WheelEvent) => {
+    if (e.deltaY > 30) goNext();
+    else if (e.deltaY < -30) goPrev();
+  }, [goNext, goPrev]);
+
+  // Empty state
+  if (shortsList.length === 0) {
+    return (
+      <div className="w-full h-full flex items-center justify-center animate-fade-in">
+        <div className="text-center py-16">
+          <div className="w-16 h-16 rounded-full bg-alu-surface flex items-center justify-center mx-auto mb-4 text-alu-text-tertiary">
+            <ShortsIcon size={28} />
+          </div>
+          <p className="text-sm font-semibold text-alu-text mb-1">No shorts yet</p>
+          <p className="text-xs text-alu-text-tertiary">Be the first to post one</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!short) return null;
+
+  const shortKey = short._id || String(short.id);
+
+  return (
+    <div
+      className="w-full h-full flex items-center justify-center animate-fade-in select-none"
+      onWheel={handleWheel}
+    >
+      <div
+        className="relative w-full max-w-[400px] mx-auto overflow-hidden"
+        style={{ height: 'calc(100vh - 180px)', maxHeight: '720px' }}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
+      >
+        {/* Video area — slides vertically */}
+        <div
+          className="w-full h-full rounded-2xl overflow-hidden relative bg-black"
+          style={{
+            transform: `translateY(${swipeOffset}px)`,
+            transition: isSwiping ? 'none' : 'transform 0.3s ease-out',
+          }}
+        >
+          {/* Media content */}
+          <div className="absolute inset-0">
+            <MediaItem post={short} />
+          </div>
+
+          {/* Bottom gradient */}
+          <div className="absolute bottom-0 left-0 right-0 h-1/2 bg-gradient-to-t from-black/70 to-transparent" />
+
+          {/* Bottom info */}
+          <div className="absolute bottom-0 left-0 right-16 p-4">
+            <div className="flex items-center gap-2 mb-2">
+              <div className="w-8 h-8 rounded-full bg-white/20 backdrop-blur-sm flex items-center justify-center text-white text-xs font-bold">
+                {(short.userId || 'U')[0].toUpperCase()}
+              </div>
+              <span className="text-white font-semibold text-sm">{short.userId?.slice(0, 12) || 'User'}</span>
+            </div>
+            {short.safePrompt && short.safePrompt !== 'User upload' && (
+              <p className="text-white text-sm leading-snug">{short.safePrompt}</p>
+            )}
+            {short.is_ai && (
+              <span className="inline-block mt-1 text-[10px] font-bold px-2 py-0.5 rounded bg-white/20 text-white backdrop-blur-sm">AI</span>
+            )}
+          </div>
+
+          {/* Right side actions (TikTok style) */}
+          <div className="absolute bottom-20 right-3 flex flex-col items-center gap-5">
+            <button onClick={(e) => { e.stopPropagation(); toggleLike(); }} className="flex flex-col items-center gap-1">
+              <div className={`w-10 h-10 rounded-full bg-white/15 backdrop-blur-sm flex items-center justify-center transition-colors ${liked.has(shortKey) ? 'text-red-400' : 'text-white'}`}>
+                <HeartIcon size={22} />
+              </div>
+              <span className="text-white text-[11px] font-medium">{(short.likes || 0) + (liked.has(shortKey) ? 1 : 0)}</span>
+            </button>
+            <button onClick={(e) => e.stopPropagation()} className="flex flex-col items-center gap-1">
+              <div className="w-10 h-10 rounded-full bg-white/15 backdrop-blur-sm flex items-center justify-center text-white">
+                <CommentIcon size={22} />
+              </div>
+            </button>
+            <button onClick={(e) => e.stopPropagation()} className="flex flex-col items-center gap-1">
+              <div className="w-10 h-10 rounded-full bg-white/15 backdrop-blur-sm flex items-center justify-center text-white">
+                <BookmarkIcon size={22} />
+              </div>
+            </button>
+            <button onClick={(e) => e.stopPropagation()} className="flex flex-col items-center gap-1">
+              <div className="w-10 h-10 rounded-full bg-white/15 backdrop-blur-sm flex items-center justify-center text-white">
+                <ShareIcon size={22} />
+              </div>
+            </button>
+          </div>
+
+          {/* Swipe hint */}
+          {currentIndex < shortsList.length - 1 && (
+            <div className="absolute bottom-2 left-1/2 -translate-x-1/2 animate-bounce">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" opacity="0.5">
+                <polyline points="6,9 12,15 18,9"/>
+              </svg>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}

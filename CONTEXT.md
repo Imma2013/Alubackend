@@ -117,18 +117,20 @@ alu-frontend/src/app/
 ├── fileSystem.ts            — OPFS helpers (save/get files)
 ├── syncService.ts           — REST sync (pull/push to backend)
 └── components/
-    ├── icons.tsx             — SVG icon components (Home, Shorts, Videos, etc.)
+    ├── icons.tsx             — SVG icon components (Home, Shorts, Videos, Shield, FileText, etc.)
     ├── Feed.tsx              — Original feed component (uses Dexie live query)
     ├── GenerationForm.tsx    — AI generation form (calls backend /generate)
-    ├── MediaItem.tsx         — Displays media from OPFS blob URLs
+    ├── MediaItem.tsx         — Displays media from OPFS + Cloudinary URLs
+    ├── PrivacyPolicy.tsx     — Full-page privacy policy overlay
+    ├── TermsConditions.tsx   — Full-page terms & conditions overlay
     └── tabs/
-        ├── HomeTab.tsx       — Stories + Facebook-style feed (MOCK DATA)
-        ├── ShortsTab.tsx     — TikTok-style vertical player (MOCK DATA)
-        ├── VideosTab.tsx     — YouTube-style grid (MOCK DATA)
-        ├── MessagesTab.tsx   — Conversations list (MOCK DATA)
-        ├── CreateTab.tsx     — Upload/AI generate (WIRED to backend POST /generate)
-        ├── ProfileTab.tsx    — User profile + content grid (MOCK DATA)
-        └── NotificationsTab.tsx — Notification list (MOCK DATA)
+        ├── HomeTab.tsx       — Real Dexie feed with sync (no mock data)
+        ├── ShortsTab.tsx     — TikTok-style vertical player (real Dexie data)
+        ├── VideosTab.tsx     — YouTube-style grid (real Dexie data)
+        ├── MessagesTab.tsx   — Empty state with search bar (post-launch feature)
+        ├── CreateTab.tsx     — Upload + AI generate with AI self-label toggle
+        ├── ProfileTab.tsx    — Real user profile + Privacy/Terms overlays
+        └── NotificationsTab.tsx — Empty state (post-launch feature)
 ```
 
 ## Design System
@@ -291,14 +293,48 @@ NEXT_PUBLIC_BACKEND_URL=<render backend url>
 - Backend pushed to Alubackend.git main → Render auto-deploy
 - User needs to add Cloudinary env vars on Render: CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET
 
+### 2026-02-10: Launch Polish — Session 5 (Claude Opus)
+**AI Content Self-Label:**
+- Added "AI Generated" toggle button in CreateTab upload mode (below file preview, before caption)
+- isAI state defaults to false, resets on clearFile() and successful upload
+- FormData sends is_ai: 'true'/'false' to backend
+- Backend uploadRoutes.js now reads is_ai from req.body (was hardcoded false)
+
+**Mock Data Removal — ALL fake usernames/data removed:**
+- HomeTab: removed MOCK_STORIES array + entire stories row + divider
+- ShortsTab: removed MOCK_SHORTS, now uses useLiveQuery from Dexie (mediaType=video, videoType=short)
+- ShortsTab: removed white scroll indicator (the right-side dots)
+- ShortsTab: shows real video content via MediaItem, empty state when no shorts
+- VideosTab: removed MOCK_VIDEOS, now uses useLiveQuery from Dexie (videoType=long)
+- VideosTab: shows real thumbnails via thumbnailUrl or MediaItem, empty state when no videos
+- MessagesTab: removed MOCK_STORIES + MOCK_CONVERSATIONS, shows empty state with search bar (kept for future)
+- NotificationsTab: removed MOCK_NOTIFICATIONS + NotifIcon helper, shows empty state
+
+**Privacy Policy + Terms & Conditions:**
+- NEW: PrivacyPolicy.tsx — full-page overlay with back button, scrollable content, user's drafted text
+- NEW: TermsConditions.tsx — same pattern, user's Terms text including AI liability clauses
+- ProfileTab settings dropdown: removed "Settings" text button, now shows Privacy / Terms & Conditions / Log Out
+- Clicking Privacy or Terms opens the respective full-page overlay
+
+**Sign-In Screen:**
+- page.tsx: imports useUser + SignInButton from @clerk/nextjs
+- If user not signed in: shows Alu logo + "Welcome to Alu" + sign-in button (modal mode)
+- Prevents unauthenticated users from seeing the app shell
+
+**New Icons:**
+- ShieldIcon (privacy, shield outline) added to icons.tsx
+- FileTextIcon (terms, document with lines) added to icons.tsx
+
+**Build:** passes clean on Next.js 16 + TypeScript
+
 ### NEXT SESSION PRIORITIES:
-1. **Test end-to-end**: Upload a real photo, verify it appears in feed for other users
-2. **Privacy statement**: User needs to draft before wide launch (REMIND THEM)
-3. Connect search to actually work (search across posts, users)
-4. Add image cropping on upload (simple, like Instagram)
-5. PWA manifest + service worker (app store bypass)
-6. Wire ShortsTab + VideosTab to real Dexie data (currently mock)
-7. Long video async generation (Veo/Sora polling pattern for 10+ min videos)
-8. Likes/comments/share wired to backend (currently local state only)
-9. Real-time messaging (post-launch)
-10. Stripe webhook completion (user upgrade to Pro on payment)
+1. **Follow/Friend system**: Follow schema in MongoDB, follow/unfollow endpoints, Follow button on profiles, real follower/following counts
+2. **User profile viewing**: Tap someone's avatar in feed/shorts to see their profile + Follow button
+3. **Search per section**: Feed search filters feed posts, Shorts search filters shorts (TikTok-style 2-column), Videos search filters videos, Messages search finds users
+4. **Full messaging**: Chat interface when tapping a user, text + image upload in chats (normal + AI), same daily rate limits for AI images in chat
+5. **Content sharing/links**: Copy link to share content anywhere on the platform and externally
+6. **Stripe Pro upgrade**: $10/month, wire webhook to actually upgrade user isPro status
+7. **Stories**: Upload photo stories (from camera roll), plus button on profile pic, swipe through
+8. **Video stitching**: Chain 8s Veo clips for 1-5 min videos (FFmpeg on backend)
+9. **PWA manifest + service worker**
+10. **Likes/comments/share wired to backend**

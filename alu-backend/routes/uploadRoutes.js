@@ -71,7 +71,7 @@ router.post('/', clerkAuth, upload.single('file'), async (req, res) => {
       contentUrl: cloudResult.secure_url,
       safePrompt: caption || 'User upload',
       originalPrompt: caption || '',
-      is_ai: false,
+      is_ai: req.body.is_ai === 'true',
       mediaType,
       videoType: mediaType === 'video' ? (videoType || 'short') : undefined,
       isLongForm: videoType === 'long',
