@@ -23,7 +23,8 @@ const PostSchema = new mongoose.Schema({
   videoType: { type: String, enum: ['short', 'long'] }, // extra detail if video
   timestamp: { type: Date, default: Date.now },
   likes: { type: Number, default: 0 },
-  isLongForm: { type: Boolean, default: false }
+  isLongForm: { type: Boolean, default: false },
+  thumbnailUrl: { type: String }
 }, { timestamps: true });
 
 const User = mongoose.model('User', UserSchema);
