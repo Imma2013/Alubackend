@@ -136,7 +136,7 @@ export default function CreateTab() {
         await saveFileFromBlob(file, fileName);
 
         // Save to Dexie
-        await db.posts.add({
+        await db.posts.put({
           ...result.post,
           contentUrl: fileName,
           synced: 1,
@@ -217,7 +217,7 @@ export default function CreateTab() {
             if (status.videoUrl) {
               const fileName = `${status.postId || Date.now()}.mp4`;
               await saveFileFromUrl(status.videoUrl, fileName);
-              await db.posts.add({
+              await db.posts.put({
                 _id: status.postId,
                 contentUrl: fileName,
                 safePrompt: prompt.trim(),
@@ -271,7 +271,7 @@ export default function CreateTab() {
 
           await saveFileFromUrl(result.post.contentUrl, fileName);
 
-          await db.posts.add({
+          await db.posts.put({
             ...result.post,
             contentUrl: fileName,
             synced: 1,

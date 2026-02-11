@@ -141,57 +141,79 @@ async function generateContent(userId, prompt, type, isLongVideo = false, visibi
       console.log(`Image uploaded to Cloudinary: ${contentUrl}`);
 
     } else if (type === 'video' && !isLongVideo) {
-      // --- SHORT VIDEO: Google Veo 3.1 ---
-      modelName = 'veo-3.1-generate-preview';
-      provider = 'Google Veo 3.1';
-      console.log(`Dispatching to ${provider}...`);
+      // --- SHORT VIDEO: Try Veo 3.1, fallback to Veo 2.0 ---
+      const veoModels = [
+        { model: 'veo-3.1-generate-preview', name: 'Google Veo 3.1' },
+        { model: 'veo-2.0-generate-001', name: 'Google Veo 2.0' },
+      ];
 
-      const operation = await ai.models.generateVideos({
-        model: modelName,
-        prompt: safePrompt,
-        config: {
-          aspectRatio: "9:16",
-          durationSeconds: 8,
+      let videoGenError = null;
+
+      for (const veo of veoModels) {
+        modelName = veo.model;
+        provider = veo.name;
+        console.log(`Dispatching to ${provider} (${modelName})...`);
+
+        try {
+          const operation = await ai.models.generateVideos({
+            model: modelName,
+            prompt: safePrompt,
+            config: {
+              aspectRatio: "9:16",
+              durationSeconds: 8,
+            }
+          });
+
+          // Poll for completion
+          let result = operation;
+          let attempts = 0;
+          const maxAttempts = 60; // 5 minutes max (5s intervals)
+
+          while (!result.done && attempts < maxAttempts) {
+            await new Promise(resolve => setTimeout(resolve, 5000));
+            result = await ai.operations.get({ operation: result });
+            attempts++;
+            console.log(`Video gen poll attempt ${attempts}/${maxAttempts} (${veo.name})...`);
+          }
+
+          if (!result.done) {
+            throw new Error(`Video generation timed out after 5 minutes with ${veo.name}.`);
+          }
+
+          if (!result.response?.generatedVideos || result.response.generatedVideos.length === 0) {
+            throw new Error(`${veo.name} returned no videos.`);
+          }
+
+          const videoData = result.response.generatedVideos[0].video;
+
+          // Upload video to Cloudinary
+          let videoSource;
+          if (videoData.uri) {
+            videoSource = videoData.uri;
+          } else if (videoData.videoBytes) {
+            videoSource = `data:video/mp4;base64,${videoData.videoBytes}`;
+          } else {
+            throw new Error(`${veo.name} returned no usable video data.`);
+          }
+
+          const cloudResult = await uploadVideoToCloudinary(videoSource, userId);
+          contentUrl = cloudResult.videoUrl;
+          thumbnailUrl = cloudResult.thumbnailUrl;
+          console.log(`Video uploaded to Cloudinary via ${veo.name}: ${contentUrl}`);
+
+          videoGenError = null; // Success — clear any previous error
+          break; // Exit the fallback loop on success
+
+        } catch (veoErr) {
+          console.error(`${veo.name} failed:`, veoErr.message);
+          videoGenError = veoErr;
+          // Continue to next model in fallback chain
         }
-      });
-
-      // Poll for completion
-      let result = operation;
-      let attempts = 0;
-      const maxAttempts = 60; // 5 minutes max (5s intervals)
-
-      while (!result.done && attempts < maxAttempts) {
-        await new Promise(resolve => setTimeout(resolve, 5000));
-        result = await ai.operations.get({ operation: result });
-        attempts++;
-        console.log(`Video gen poll attempt ${attempts}/${maxAttempts}...`);
       }
 
-      if (!result.done) {
-        throw new Error("Video generation timed out after 5 minutes.");
+      if (videoGenError) {
+        throw new Error(`All video models failed. Last error: ${videoGenError.message}`);
       }
-
-      if (!result.response?.generatedVideos || result.response.generatedVideos.length === 0) {
-        throw new Error("Video generation returned no videos.");
-      }
-
-      const videoData = result.response.generatedVideos[0].video;
-
-      // Upload video to Cloudinary
-      let videoSource;
-      if (videoData.uri) {
-        videoSource = videoData.uri;
-      } else if (videoData.videoBytes) {
-        // Convert base64 to data URI for upload
-        videoSource = `data:video/mp4;base64,${videoData.videoBytes}`;
-      } else {
-        throw new Error("Video generation returned no usable video data.");
-      }
-
-      const cloudResult = await uploadVideoToCloudinary(videoSource, userId);
-      contentUrl = cloudResult.videoUrl;
-      thumbnailUrl = cloudResult.thumbnailUrl;
-      console.log(`Video uploaded to Cloudinary: ${contentUrl}`);
 
     } else if (type === 'video' && isLongVideo) {
       // --- LONG VIDEO: Not available via simple generation ---

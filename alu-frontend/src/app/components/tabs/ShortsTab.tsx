@@ -30,7 +30,7 @@ export default function ShortsTab() {
 
   const toggleLike = () => {
     if (!short) return;
-    const key = short._id || String(short.id);
+    const key = short._id;
     setLiked(prev => {
       const next = new Set(prev);
       if (next.has(key)) next.delete(key);
@@ -103,7 +103,7 @@ export default function ShortsTab() {
 
   if (!short) return null;
 
-  const shortKey = short._id || String(short.id);
+  const shortKey = short._id;
 
   return (
     <div

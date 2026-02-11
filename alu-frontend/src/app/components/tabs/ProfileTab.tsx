@@ -9,6 +9,7 @@ import { SettingsIcon, ShieldIcon, FileTextIcon, LogOutIcon } from '../icons';
 import PrivacyPolicy from '../PrivacyPolicy';
 import TermsConditions from '../TermsConditions';
 import EditProfile from '../EditProfile';
+import PostModal from '../PostModal';
 
 type ContentTab = 'posts' | 'shorts' | 'videos' | 'likes' | 'favorites';
 
@@ -24,6 +25,7 @@ export default function ProfileTab() {
   const [profileShowAI, setProfileShowAI] = useState(true);
   const [profileShowNormal, setProfileShowNormal] = useState(true);
   const [copiedLink, setCopiedLink] = useState(false);
+  const [selectedPost, setSelectedPost] = useState<Post | null>(null);
 
   // Real data from Dexie — user's own posts
   const userPosts = useLiveQuery(
@@ -187,6 +189,9 @@ export default function ProfileTab() {
       {/* Edit Profile overlay */}
       {showEditProfile && <EditProfile onBack={() => setShowEditProfile(false)} />}
 
+      {/* Post expand modal */}
+      {selectedPost && <PostModal post={selectedPost} onClose={() => setSelectedPost(null)} />}
+
       {/* Content Tabs */}
       <div className="border-b border-alu-border">
         <div className="flex overflow-x-auto hide-scrollbar">
@@ -227,8 +232,9 @@ export default function ProfileTab() {
         {currentContent.length > 0 ? (
           currentContent.map((post) => (
             <div
-              key={post._id || post.id}
-              className="aspect-square relative overflow-hidden bg-alu-surface"
+              key={post._id}
+              className="aspect-square relative overflow-hidden bg-alu-surface cursor-pointer"
+              onClick={() => setSelectedPost(post)}
             >
               <MediaItem post={post} />
               {post.is_ai && (

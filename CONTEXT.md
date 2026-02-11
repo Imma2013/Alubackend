@@ -33,7 +33,7 @@ alu-frontend/   (Next.js + Tailwind) — ON VERCEL, DEPLOYED (alu-teal-pi.vercel
 
 ### AI Services
 - NanoBanana Pro / `gemini-3-pro-image-preview` (images — via Gemini API generateContent)
-- Veo 3.1 / `veo-3.1-generate-preview` (shorts — via Gemini API generateVideos)
+- Veo 3.1 / `veo-3.1-generate-preview` → fallback Veo 2.0 / `veo-2.0-generate-001` (shorts — via Gemini API generateVideos)
 - Sora 2 via piapi.ai (long video clips — storyboard mode, falls back to Veo 3.1)
 - Gemini Flash 2.0 as orchestrator/prompt cleaner + scene splitter (conductor.js)
 - FFmpeg via ffmpeg-static (video stitching/concatenation)
@@ -123,6 +123,7 @@ alu-frontend/src/app/
     ├── Feed.tsx              — Original feed component (uses Dexie live query)
     ├── GenerationForm.tsx    — AI generation form (calls backend /generate)
     ├── MediaItem.tsx         — Displays media from OPFS + Cloudinary URLs
+    ├── PostModal.tsx          — Instagram-style post expand overlay (media + actions)
     ├── PrivacyPolicy.tsx     — Full-page privacy policy overlay
     ├── TermsConditions.tsx   — Full-page terms & conditions overlay
     └── tabs/
@@ -185,8 +186,8 @@ These files in the frontend already have working logic — they just need to be 
    - Shows loading placeholder
    - Revokes blob URLs on unmount
 
-4. **db.ts** — Dexie schema:
-   - Posts table: id, mediaType, timestamp, userId, synced, updatedAt
+4. **db.ts** — Dexie schema (v4):
+   - Posts table: _id (primary key = MongoDB ObjectId), mediaType, timestamp, userId, synced, updatedAt
    - SyncState table: tracks last pull timestamp
 
 5. **syncService.ts** — REST sync:
@@ -384,6 +385,49 @@ NEXT_PUBLIC_BACKEND_URL=<render backend url>
 - alu-frontend/src/app/components/tabs/CreateTab.tsx (visibility, usage, long video progress)
 
 **Build:** Frontend passes `npm run build`, backend passes all syntax checks
+
+### 2026-02-10: Bug Fixes + Post Modal — Session 7 (Claude Opus)
+
+**Fix 1 — Duplicate Posts (Critical):**
+- Root cause: Dexie used `++id` (auto-increment) as primary key — `bulkPut` from sync couldn't match MongoDB `_id`, creating duplicate rows
+- Changed Dexie primary key from `++id` to `_id` (MongoDB ObjectId string)
+- Bumped Dexie schema to version 4 (kept v3 declaration for upgrade path)
+- Changed all `db.posts.add()` → `db.posts.put()` (upsert) in CreateTab.tsx
+- Removed `id?: number` from Post interface — `_id: string` is now required
+- Fixed all `post._id || String(post.id)` fallbacks → just `post._id` in ShortsTab, VideosTab, HomeTab
+
+**Fix 2 — Instagram-Style Post Expand Modal:**
+- NEW: PostModal.tsx — fullscreen overlay with dark backdrop + white card
+- Shows MediaItem (image/video), action bar (like/comment/share/save), caption, timestamp
+- Close via X button or clicking backdrop
+- Share uses `navigator.share()` on mobile + `navigator.clipboard.writeText()` fallback
+- Wired into HomeTab (click media to expand) and ProfileTab (click grid item)
+
+**Fix 3 — Shorts 500 Error (Veo Model Fallback):**
+- Root cause: `veo-3.1-generate-preview` returns 500 (model not available on API key)
+- Added fallback chain: tries Veo 3.1 first, falls back to `veo-2.0-generate-001`
+- Uses for-loop with try/catch per model — breaks on first success
+- Logs which model succeeded/failed for debugging
+
+**Fix 4 — Share Button on Posts:**
+- Wired ShareIcon button in HomeTab to `handleShare()` function
+- Uses Web Share API (`navigator.share()`) on mobile devices
+- Falls back to `navigator.clipboard.writeText()` on desktop
+- Share URL format: `{origin}/post/{post._id}`
+
+**Modified Files:**
+- alu-frontend/src/app/db.ts (primary key `_id`, removed `id`, version 4)
+- alu-frontend/src/app/components/tabs/CreateTab.tsx (`add` → `put`)
+- alu-frontend/src/app/components/tabs/HomeTab.tsx (PostModal, share, key fix)
+- alu-frontend/src/app/components/tabs/ProfileTab.tsx (PostModal, key fix)
+- alu-frontend/src/app/components/tabs/ShortsTab.tsx (key fix: removed `.id` ref)
+- alu-frontend/src/app/components/tabs/VideosTab.tsx (key fix: removed `.id` ref)
+- alu-backend/services/conductor.js (Veo 3.1 → 2.0 fallback chain)
+
+**New Files:**
+- alu-frontend/src/app/components/PostModal.tsx
+
+**Build:** Frontend passes `npm run build` clean (Next.js 16 + TypeScript)
 
 ### NEXT SESSION PRIORITIES:
 1. **Follow/Friend system**: Follow schema in MongoDB, follow/unfollow endpoints, Follow button on profiles, real follower/following counts

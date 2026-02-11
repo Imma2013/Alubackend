@@ -36,7 +36,7 @@ export default function VideosTab() {
     <div className="w-full max-w-[960px] mx-auto animate-fade-in">
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 p-2">
         {videoList.map((video) => {
-          const key = video._id || String(video.id);
+          const key = video._id;
           return (
             <button key={key} className="group text-left w-full">
               {/* Thumbnail */}

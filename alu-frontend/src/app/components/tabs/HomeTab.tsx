@@ -7,6 +7,7 @@ import { db, Post } from '../../db';
 import { pullChanges, pushChanges } from '../../syncService';
 import MediaItem from '../MediaItem';
 import { HeartIcon, CommentIcon, ShareIcon, BookmarkIcon } from '../icons';
+import PostModal from '../PostModal';
 
 interface HomeTabProps {
   showAI: boolean;
@@ -18,6 +19,7 @@ export default function HomeTab({ showAI, showNormal }: HomeTabProps) {
   const [likedPosts, setLikedPosts] = useState<Set<string>>(new Set());
   const [savedPosts, setSavedPosts] = useState<Set<string>>(new Set());
   const [isSyncing, setIsSyncing] = useState(false);
+  const [selectedPost, setSelectedPost] = useState<Post | null>(null);
 
   // Live query from Dexie — real posts
   const allPosts = useLiveQuery(
@@ -50,7 +52,7 @@ export default function HomeTab({ showAI, showNormal }: HomeTabProps) {
     return () => clearInterval(interval);
   }, [isSignedIn, getToken]);
 
-  const getPostKey = (post: Post) => post._id || String(post.id);
+  const getPostKey = (post: Post) => post._id;
 
   const toggleLike = (key: string) => {
     setLikedPosts(prev => {
@@ -68,6 +70,24 @@ export default function HomeTab({ showAI, showNormal }: HomeTabProps) {
       else next.add(key);
       return next;
     });
+  };
+
+  const handleShare = async (post: Post) => {
+    const shareUrl = `${window.location.origin}/post/${post._id}`;
+    const shareData = {
+      title: 'Check this out on Alu',
+      text: post.safePrompt || 'Shared from Alu',
+      url: shareUrl,
+    };
+    try {
+      if (navigator.share) {
+        await navigator.share(shareData);
+      } else {
+        await navigator.clipboard.writeText(shareUrl);
+      }
+    } catch {
+      try { await navigator.clipboard.writeText(shareUrl); } catch { /* silent */ }
+    }
   };
 
   const timeAgo = (date: Date) => {
@@ -116,6 +136,7 @@ export default function HomeTab({ showAI, showNormal }: HomeTabProps) {
 
         {posts.map((post) => {
           const key = getPostKey(post);
+          if (!key) return null; // Skip posts without _id (shouldn't happen)
           return (
             <article key={key} className="border-b border-alu-border-light">
               {/* Post Header */}
@@ -141,8 +162,8 @@ export default function HomeTab({ showAI, showNormal }: HomeTabProps) {
                 </div>
               )}
 
-              {/* Post Media */}
-              <div className="w-full aspect-[4/3] bg-alu-surface relative overflow-hidden">
+              {/* Post Media — click to expand */}
+              <div className="w-full aspect-[4/3] bg-alu-surface relative overflow-hidden cursor-pointer" onClick={() => setSelectedPost(post)}>
                 <MediaItem post={post} />
                 {post.is_ai && (
                   <div className="absolute top-2 left-2 text-[10px] font-bold px-2 py-0.5 rounded bg-black/40 text-white backdrop-blur-sm">
@@ -166,7 +187,10 @@ export default function HomeTab({ showAI, showNormal }: HomeTabProps) {
                   <button className="flex items-center gap-1.5 text-alu-text-secondary hover:text-alu-text transition-colors">
                     <CommentIcon size={20} />
                   </button>
-                  <button className="flex items-center gap-1.5 text-alu-text-secondary hover:text-alu-text transition-colors">
+                  <button
+                    onClick={() => handleShare(post)}
+                    className="flex items-center gap-1.5 text-alu-text-secondary hover:text-alu-text transition-colors"
+                  >
                     <ShareIcon size={20} />
                   </button>
                 </div>
@@ -183,6 +207,9 @@ export default function HomeTab({ showAI, showNormal }: HomeTabProps) {
           );
         })}
       </div>
+
+      {/* Post expand modal */}
+      {selectedPost && <PostModal post={selectedPost} onClose={() => setSelectedPost(null)} />}
     </div>
   );
 }
