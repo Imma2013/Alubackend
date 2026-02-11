@@ -2,7 +2,7 @@ const express = require('express');
 const multer = require('multer');
 const { v2: cloudinary } = require('cloudinary');
 const clerkAuth = require('../middleware/clerkAuth');
-const { Post } = require('../config/db');
+const { Post, User } = require('../config/db');
 
 const router = express.Router();
 
@@ -29,7 +29,7 @@ const upload = multer({
  */
 router.post('/', clerkAuth, upload.single('file'), async (req, res) => {
   const userId = req.auth.sub;
-  const { caption, mediaType, videoType, visibility } = req.body;
+  const { caption, mediaType, videoType, visibility, displayName, avatarUrl } = req.body;
 
   if (!req.file) {
     return res.status(400).json({ error: 'No file uploaded' });
@@ -40,6 +40,15 @@ router.post('/', clerkAuth, upload.single('file'), async (req, res) => {
   }
 
   try {
+    // Sync user profile info to User record (makes them searchable)
+    if (displayName) {
+      await User.findOneAndUpdate(
+        { userId },
+        { $set: { displayName, avatarUrl: avatarUrl || '' } },
+        { upsert: true }
+      );
+    }
+
     // Upload to Cloudinary via stream
     const cloudResult = await new Promise((resolve, reject) => {
       const resourceType = mediaType === 'image' ? 'image' : 'video';
@@ -78,6 +87,8 @@ router.post('/', clerkAuth, upload.single('file'), async (req, res) => {
       isLongForm: videoType === 'long',
       thumbnailUrl: cloudResult.eager?.[0]?.secure_url || null,
       visibility: visibility || 'everyone',
+      displayName: displayName || '',
+      avatarUrl: avatarUrl || '',
     });
 
     res.status(201).json({ success: true, post });

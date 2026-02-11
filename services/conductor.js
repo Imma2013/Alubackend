@@ -88,10 +88,15 @@ async function uploadVideoToCloudinary(videoUrl, userId) {
 /**
  * Main Conductor Function
  */
-async function generateContent(userId, prompt, type, isLongVideo = false, visibility = 'everyone') {
+async function generateContent(userId, prompt, type, isLongVideo = false, visibility = 'everyone', displayName = '', avatarUrl = '') {
   let user = await User.findOne({ userId });
   if (!user) {
-    user = await User.create({ userId });
+    user = await User.create({ userId, displayName, avatarUrl });
+  } else if (displayName && displayName !== user.displayName) {
+    // Sync profile info to User record so they're searchable
+    user.displayName = displayName;
+    if (avatarUrl) user.avatarUrl = avatarUrl;
+    await user.save();
   }
 
   let limitKey = 'dailyImages';
@@ -231,6 +236,8 @@ async function generateContent(userId, prompt, type, isLongVideo = false, visibi
       isLongForm: isLongVideo,
       visibility: visibility || 'everyone',
       thumbnailUrl,
+      displayName: displayName || '',
+      avatarUrl: avatarUrl || '',
     });
 
     posthog.capture({

@@ -12,7 +12,7 @@ const jobs = new Map();
 /**
  * Create a new video generation job
  */
-function createJob(userId, prompt, durationSeconds, visibility) {
+function createJob(userId, prompt, durationSeconds, visibility, options = {}) {
     const jobId = uuidv4();
     const job = {
         jobId,
@@ -20,6 +20,10 @@ function createJob(userId, prompt, durationSeconds, visibility) {
         prompt,
         durationSeconds,
         visibility: visibility || 'everyone',
+        aspectRatio: options.aspectRatio || '16:9',
+        videoType: options.videoType || 'long',
+        displayName: options.displayName || '',
+        avatarUrl: options.avatarUrl || '',
         status: 'queued',
         progress: 0,
         totalClips: 0,
