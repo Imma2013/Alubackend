@@ -6,7 +6,11 @@ import { db, Post } from '../../db';
 import MediaItem from '../MediaItem';
 import { HeartIcon, CommentIcon, ShareIcon, BookmarkIcon, ShortsIcon } from '../icons';
 
-export default function ShortsTab() {
+interface ShortsTabProps {
+  searchQuery?: string;
+}
+
+export default function ShortsTab({ searchQuery = '' }: ShortsTabProps) {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [liked, setLiked] = useState<Set<string>>(new Set());
   const [swipeOffset, setSwipeOffset] = useState(0);
@@ -15,7 +19,7 @@ export default function ShortsTab() {
   const touchStartTime = useRef(0);
 
   // Real data from Dexie — shorts
-  const shorts = useLiveQuery(
+  const allShorts = useLiveQuery(
     async () => {
       const all = await db.posts.where('mediaType').equals('video').toArray();
       return all
@@ -25,7 +29,14 @@ export default function ShortsTab() {
     []
   );
 
-  const shortsList = shorts || [];
+  // Filter by search query
+  const shorts = allShorts?.filter((p: Post) => {
+    if (!searchQuery.trim()) return true;
+    const q = searchQuery.trim().toLowerCase();
+    return p.safePrompt?.toLowerCase().includes(q) || p.displayName?.toLowerCase().includes(q);
+  }) || [];
+
+  const shortsList = shorts;
   const short = shortsList[currentIndex];
 
   const toggleLike = () => {
@@ -178,7 +189,7 @@ export default function ShortsTab() {
           {currentIndex < shortsList.length - 1 && (
             <div className="absolute bottom-2 left-1/2 -translate-x-1/2 animate-bounce">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" opacity="0.5">
-                <polyline points="6,9 12,15 18,9"/>
+                <polyline points="6,9 12,15 18,9" />
               </svg>
             </div>
           )}

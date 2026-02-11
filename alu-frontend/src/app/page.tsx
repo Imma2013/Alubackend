@@ -1,7 +1,8 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { UserButton, useUser, SignInButton } from '@clerk/nextjs';
+import { initDb } from './db';
 import {
   HomeIcon,
   ShortsIcon,
@@ -28,6 +29,11 @@ const TABS_WITH_HEADER: Tab[] = ['home', 'shorts', 'videos'];
 export default function App() {
   const { isSignedIn, isLoaded } = useUser();
   const [activeTab, setActiveTab] = useState<Tab>('home');
+
+  // Initialize Dexie on mount — handles UpgradeError from primary key change
+  useEffect(() => {
+    initDb().catch(err => console.error('Failed to initialize database:', err));
+  }, []);
   const [showAI, setShowAI] = useState(true);
   const [showNormal, setShowNormal] = useState(true);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -281,7 +287,7 @@ export default function App() {
 
         {/* Tab Content */}
         <div className="w-full">
-          {activeTab === 'home' && <HomeTab showAI={showAI} showNormal={showNormal} />}
+          {activeTab === 'home' && <HomeTab showAI={showAI} showNormal={showNormal} searchQuery={searchQuery} />}
           {activeTab === 'shorts' && <ShortsTab />}
           {activeTab === 'videos' && <VideosTab />}
           {activeTab === 'messages' && <MessagesTab />}

@@ -12,6 +12,9 @@ const { processVideoJob } = require('./services/videoStitcher');
 const paymentRoutes = require('./routes/paymentRoutes');
 const syncRoutes = require('./routes/syncRoutes');
 const uploadRoutes = require('./routes/uploadRoutes');
+const userRoutes = require('./routes/userRoutes');
+const postRoutes = require('./routes/postRoutes');
+const notificationRoutes = require('./routes/notificationRoutes');
 const clerkAuth = require('./middleware/clerkAuth');
 
 const app = express();
@@ -49,18 +52,21 @@ const rateLimitUpload = (req, res, next) => {
 app.use('/payments', paymentRoutes);
 app.use('/sync', syncRoutes);
 app.use('/upload', rateLimitUpload, uploadRoutes);
+app.use('/users', userRoutes);
+app.use('/posts', postRoutes);
+app.use('/notifications', notificationRoutes);
 
 // This route is now protected. A valid Clerk token is required.
 app.post('/generate', clerkAuth, async (req, res) => {
   const userId = req.auth.sub;
-  const { prompt, type, isLongVideo, visibility } = req.body;
+  const { prompt, type, isLongVideo, visibility, displayName, avatarUrl } = req.body;
 
   if (!prompt || !type) {
     return res.status(400).json({ error: 'Missing required fields: prompt or type' });
   }
 
   try {
-    const post = await generateContent(userId, prompt, type, isLongVideo, visibility || 'everyone');
+    const post = await generateContent(userId, prompt, type, isLongVideo, visibility || 'everyone', displayName || '', avatarUrl || '');
     res.status(201).json({ success: true, post });
   } catch (error) {
     if (error.message.includes('429')) {
@@ -120,7 +126,7 @@ app.get('/', (req, res) => {
 app.post('/generate/long-video', clerkAuth, async (req, res) => {
   try {
     const userId = req.auth.sub;
-    const { prompt, durationSeconds, visibility } = req.body;
+    const { prompt, durationSeconds, visibility, displayName, avatarUrl } = req.body;
 
     if (!prompt) {
       return res.status(400).json({ error: 'Missing prompt' });
@@ -130,13 +136,18 @@ app.post('/generate/long-video', clerkAuth, async (req, res) => {
 
     // Check daily limit
     let user = await User.findOne({ userId });
-    if (!user) user = await User.create({ userId });
+    if (!user) user = await User.create({ userId, displayName, avatarUrl });
     if (user.dailyLongVids >= 1 && !user.isPro) {
       return res.status(429).json({ error: 'Daily long video limit reached. Upgrade to Pro for more.' });
     }
 
-    // Create job
-    const job = createJob(userId, prompt, duration, visibility || 'everyone');
+    // Create job with options
+    const job = createJob(userId, prompt, duration, visibility || 'everyone', {
+      aspectRatio: '16:9',
+      videoType: 'long',
+      displayName: displayName || '',
+      avatarUrl: avatarUrl || '',
+    });
 
     // Start processing in background (fire and forget)
     processVideoJob(job).catch(err => {
@@ -147,6 +158,45 @@ app.post('/generate/long-video', clerkAuth, async (req, res) => {
   } catch (error) {
     console.error('Long Video Error:', error);
     res.status(500).json({ error: 'Failed to start video generation' });
+  }
+});
+
+// --- Short Video Stitching (up to 60s, 9:16 vertical) ---
+app.post('/generate/short-video', clerkAuth, async (req, res) => {
+  try {
+    const userId = req.auth.sub;
+    const { prompt, durationSeconds, visibility, displayName, avatarUrl } = req.body;
+
+    if (!prompt) {
+      return res.status(400).json({ error: 'Missing prompt' });
+    }
+
+    const duration = Math.min(Math.max(durationSeconds || 60, 8), 60); // 8s - 60s
+
+    // Check daily limit
+    let user = await User.findOne({ userId });
+    if (!user) user = await User.create({ userId, displayName, avatarUrl });
+    if (user.dailyShorts >= 2 && !user.isPro) {
+      return res.status(429).json({ error: 'Daily shorts limit reached. Upgrade to Pro for more.' });
+    }
+
+    // Create job with 9:16 aspect ratio for shorts
+    const job = createJob(userId, prompt, duration, visibility || 'everyone', {
+      aspectRatio: '9:16',
+      videoType: 'short',
+      displayName: displayName || '',
+      avatarUrl: avatarUrl || '',
+    });
+
+    // Start processing in background (fire and forget)
+    processVideoJob(job).catch(err => {
+      console.error(`Background short video job ${job.jobId} error:`, err);
+    });
+
+    res.status(202).json({ jobId: job.jobId, status: 'queued' });
+  } catch (error) {
+    console.error('Short Video Error:', error);
+    res.status(500).json({ error: 'Failed to start short video generation' });
   }
 });
 

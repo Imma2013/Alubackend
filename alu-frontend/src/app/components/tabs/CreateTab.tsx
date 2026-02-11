@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
-import { useAuth } from '@clerk/nextjs';
+import { useAuth, useUser } from '@clerk/nextjs';
 import { ImageIcon, ZapIcon, FilmIcon, SparkleIcon, UploadIcon, GlobeIcon, LockIcon, UsersIcon } from '../icons';
 import { db } from '../../db';
 import { saveFileFromUrl, saveFileFromBlob } from '../../fileSystem';
@@ -10,6 +10,9 @@ type ContentType = 'image' | 'short' | 'video';
 
 export default function CreateTab() {
   const { getToken } = useAuth();
+  const { user } = useUser();
+  const displayName = user?.fullName || user?.firstName || '';
+  const avatarUrl = user?.imageUrl || '';
   const [selectedType, setSelectedType] = useState<ContentType>('image');
   const [mode, setMode] = useState<'upload' | 'ai'>('ai');
   const [prompt, setPrompt] = useState('');
@@ -112,6 +115,8 @@ export default function CreateTab() {
       if (selectedType === 'video') formData.append('videoType', 'long');
       formData.append('is_ai', isAI ? 'true' : 'false');
       formData.append('visibility', privacy);
+      formData.append('displayName', displayName);
+      formData.append('avatarUrl', avatarUrl);
 
       const response = await fetch(
         `${process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3001'}/upload`,
@@ -171,9 +176,11 @@ export default function CreateTab() {
 
       const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3001';
 
-      if (selectedType === 'video') {
-        // --- LONG VIDEO: use stitching pipeline ---
-        const res = await fetch(`${backendUrl}/generate/long-video`, {
+      if (selectedType === 'video' || selectedType === 'short') {
+        // --- VIDEO STITCHING: shorts (60s, 9:16) or long (5min, 16:9) ---
+        const isShort = selectedType === 'short';
+        const endpoint = isShort ? '/generate/short-video' : '/generate/long-video';
+        const res = await fetch(`${backendUrl}${endpoint}`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -181,8 +188,10 @@ export default function CreateTab() {
           },
           body: JSON.stringify({
             prompt: prompt.trim(),
-            durationSeconds: 300, // 5 minutes
+            durationSeconds: isShort ? 60 : 300,
             visibility: privacy,
+            displayName,
+            avatarUrl,
           }),
         });
 
@@ -193,7 +202,7 @@ export default function CreateTab() {
 
         const { jobId } = await res.json();
         setVideoJobId(jobId);
-        setVideoStep('Starting video generation...');
+        setVideoStep(isShort ? 'Starting short generation...' : 'Starting video generation...');
 
         // Poll for progress
         let complete = false;
@@ -222,15 +231,17 @@ export default function CreateTab() {
                 contentUrl: fileName,
                 safePrompt: prompt.trim(),
                 mediaType: 'video',
-                videoType: 'long',
+                videoType: isShort ? 'short' : 'long',
                 is_ai: true,
-                isLongForm: true,
+                isLongForm: !isShort,
                 userId: '',
                 timestamp: new Date(),
                 synced: 1,
                 updatedAt: new Date(),
                 visibility: privacy as 'everyone' | 'followers' | 'private',
                 thumbnailUrl: status.thumbnailUrl,
+                displayName,
+                avatarUrl,
               });
             }
             setSuccess(true);
@@ -241,12 +252,14 @@ export default function CreateTab() {
           }
         }
       } else {
-        // --- IMAGE or SHORT: use regular /generate ---
+        // --- IMAGE: single /generate call ---
         const body = {
           prompt: prompt.trim(),
-          type: selectedType === 'image' ? 'image' : 'video',
+          type: 'image',
           isLongVideo: false,
           visibility: privacy,
+          displayName,
+          avatarUrl,
         };
 
         const response = await fetch(`${backendUrl}/generate`, {
@@ -266,8 +279,7 @@ export default function CreateTab() {
         const result = await response.json();
 
         if (result.post && result.post.contentUrl) {
-          const fileExtension = result.post.mediaType === 'image' ? 'png' : 'mp4';
-          const fileName = `${result.post._id}.${fileExtension}`;
+          const fileName = `${result.post._id}.png`;
 
           await saveFileFromUrl(result.post.contentUrl, fileName);
 

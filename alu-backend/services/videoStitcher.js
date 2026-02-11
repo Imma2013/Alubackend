@@ -85,11 +85,11 @@ Video concept: ${prompt}`;
 /**
  * Generate a single video clip — tries Sora 2 (piapi.ai) first, falls back to Veo 3.1
  */
-async function generateClip(scenePrompt) {
+async function generateClip(scenePrompt, aspectRatio = '16:9') {
     // Try Sora 2 first (storyboard mode via piapi.ai)
     if (SORA_API_URL && SORA_API_KEY) {
         try {
-            const soraResult = await generateClipViaSora(scenePrompt);
+            const soraResult = await generateClipViaSora(scenePrompt, aspectRatio);
             if (soraResult) return soraResult;
         } catch (err) {
             console.warn('Sora 2 clip failed, falling back to Veo 3.1:', err.message);
@@ -97,20 +97,20 @@ async function generateClip(scenePrompt) {
     }
 
     // Fallback: Veo 3.1
-    return await generateClipViaVeo(scenePrompt);
+    return await generateClipViaVeo(scenePrompt, aspectRatio);
 }
 
 /**
  * Generate clip via Sora 2 (piapi.ai)
  */
-async function generateClipViaSora(scenePrompt) {
+async function generateClipViaSora(scenePrompt, aspectRatio = '16:9') {
     const axios = require('axios');
 
     // Create task
     const createRes = await axios.post(SORA_API_URL, {
         prompt: scenePrompt,
         duration: CLIP_DURATION,
-        aspect_ratio: '16:9',
+        aspect_ratio: aspectRatio,
     }, {
         headers: {
             'x-api-key': SORA_API_KEY,
@@ -151,12 +151,12 @@ async function generateClipViaSora(scenePrompt) {
 /**
  * Generate clip via Veo 3.1 (Google GenAI)
  */
-async function generateClipViaVeo(scenePrompt) {
+async function generateClipViaVeo(scenePrompt, aspectRatio = '16:9') {
     const operation = await ai.models.generateVideos({
         model: 'veo-3.1-generate-preview',
         prompt: scenePrompt,
         config: {
-            aspectRatio: '16:9',
+            aspectRatio: aspectRatio,
             durationSeconds: CLIP_DURATION,
         },
     });
@@ -211,7 +211,7 @@ function downloadFile(url, filePath) {
 /**
  * Process clips in batches to respect rate limits
  */
-async function generateClipsInBatches(scenes, jobId) {
+async function generateClipsInBatches(scenes, jobId, job) {
     const clipPaths = [];
     const tmpDir = path.join(os.tmpdir(), `alu-video-${jobId}`);
     fs.mkdirSync(tmpDir, { recursive: true });
@@ -227,7 +227,7 @@ async function generateClipsInBatches(scenes, jobId) {
             const clipPath = path.join(tmpDir, `clip_${String(clipIdx).padStart(3, '0')}.mp4`);
 
             try {
-                const videoUrl = await generateClip(scene);
+                const videoUrl = await generateClip(scene, job.aspectRatio || '16:9');
                 if (videoUrl) {
                     await downloadFile(videoUrl, clipPath);
                     return clipPath;
@@ -288,12 +288,12 @@ function concatenateClips(clipPaths, tmpDir, outputPath) {
 /**
  * Upload final video to Cloudinary
  */
-async function uploadToCloudinary(filePath, userId) {
+async function uploadToCloudinary(filePath, userId, folder = 'alu-long-videos') {
     return new Promise((resolve, reject) => {
         cloudinary.uploader.upload(filePath, {
             resource_type: 'video',
-            folder: 'alu-long-videos',
-            public_id: `${userId}_long_${Date.now()}`,
+            folder: folder,
+            public_id: `${userId}_${folder === 'alu-shorts' ? 'short' : 'long'}_${Date.now()}`,
             eager: [
                 { format: 'jpg', width: 640, height: 360, crop: 'thumb', gravity: 'auto' },
             ],
@@ -325,7 +325,8 @@ function cleanup(tmpDir) {
  * Main stitching pipeline — runs in background
  */
 async function processVideoJob(job) {
-    const { jobId, userId, prompt, durationSeconds, visibility } = job;
+    const { jobId, userId, prompt, durationSeconds, visibility, videoType, displayName, avatarUrl } = job;
+    const isShort = videoType === 'short';
     let tmpDir = null;
 
     try {
@@ -347,7 +348,7 @@ async function processVideoJob(job) {
         });
 
         // 3. Generate all clips
-        const { clipPaths, tmpDir: dir } = await generateClipsInBatches(scenes, jobId);
+        const { clipPaths, tmpDir: dir } = await generateClipsInBatches(scenes, jobId, job);
         tmpDir = dir;
 
         if (clipPaths.length === 0) {
@@ -375,7 +376,7 @@ async function processVideoJob(job) {
             progress: 85,
         });
 
-        const cloudResult = await uploadToCloudinary(outputPath, userId);
+        const cloudResult = await uploadToCloudinary(outputPath, userId, isShort ? 'alu-shorts' : 'alu-long-videos');
 
         // 6. Create Post in MongoDB
         const post = await Post.create({
@@ -385,16 +386,18 @@ async function processVideoJob(job) {
             originalPrompt: prompt,
             is_ai: true,
             mediaType: 'video',
-            videoType: 'long',
-            isLongForm: true,
+            videoType: isShort ? 'short' : 'long',
+            isLongForm: !isShort,
             thumbnailUrl: cloudResult.thumbnailUrl,
             visibility: visibility || 'everyone',
+            displayName: displayName || '',
+            avatarUrl: avatarUrl || '',
         });
 
         // 7. Update user usage
         const user = await User.findOne({ userId });
         if (user) {
-            user.dailyLongVids += 1;
+            user[isShort ? 'dailyShorts' : 'dailyLongVids'] += 1;
             await user.save();
         }
 

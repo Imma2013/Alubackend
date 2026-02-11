@@ -5,7 +5,11 @@ import { db, Post } from '../../db';
 import MediaItem from '../MediaItem';
 import { VideosIcon } from '../icons';
 
-export default function VideosTab() {
+interface VideosTabProps {
+  searchQuery?: string;
+}
+
+export default function VideosTab({ searchQuery = '' }: VideosTabProps) {
   const videos = useLiveQuery(
     async () => {
       const all = await db.posts.where('mediaType').equals('video').toArray();
@@ -16,7 +20,12 @@ export default function VideosTab() {
     []
   );
 
-  const videoList = videos || [];
+  // Filter by search query
+  const videoList = (videos || []).filter((p: Post) => {
+    if (!searchQuery.trim()) return true;
+    const q = searchQuery.trim().toLowerCase();
+    return p.safePrompt?.toLowerCase().includes(q) || p.displayName?.toLowerCase().includes(q);
+  });
 
   if (videoList.length === 0) {
     return (
@@ -51,7 +60,7 @@ export default function VideosTab() {
                 {/* Play icon on hover */}
                 <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-200">
                   <div className="w-12 h-12 rounded-full bg-black/40 backdrop-blur-sm flex items-center justify-center">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="white"><polygon points="8,5 19,12 8,19"/></svg>
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="white"><polygon points="8,5 19,12 8,19" /></svg>
                   </div>
                 </div>
                 {video.is_ai && (

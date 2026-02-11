@@ -124,16 +124,19 @@ alu-frontend/src/app/
     ├── GenerationForm.tsx    — AI generation form (calls backend /generate)
     ├── MediaItem.tsx         — Displays media from OPFS + Cloudinary URLs
     ├── PostModal.tsx          — Instagram-style post expand overlay (media + actions)
+    ├── CommentsPanel.tsx      — TikTok-style slide-up comments panel (CRUD via API)
     ├── PrivacyPolicy.tsx     — Full-page privacy policy overlay
     ├── TermsConditions.tsx   — Full-page terms & conditions overlay
     └── tabs/
-        ├── HomeTab.tsx       — Real Dexie feed with sync (no mock data)
+        ├── HomeTab.tsx       — Real Dexie feed with like API, comments, people search
         ├── ShortsTab.tsx     — TikTok-style vertical player (real Dexie data)
         ├── VideosTab.tsx     — YouTube-style grid (real Dexie data)
-        ├── MessagesTab.tsx   — Empty state with search bar (post-launch feature)
-        ├── CreateTab.tsx     — Upload + AI generate with AI self-label toggle
+        ├── MessagesTab.tsx   — User search by name (messaging coming soon)
+        ├── CreateTab.tsx     — Upload + AI generate with displayName/avatarUrl
         ├── ProfileTab.tsx    — Real user profile + Privacy/Terms overlays
-        └── NotificationsTab.tsx — Empty state (post-launch feature)
+        └── NotificationsTab.tsx — Empty state (backend ready, frontend pending)
+├── post/[id]/page.tsx       — Share link page (media + comments + like/share)
+├── watch/[id]/page.tsx      — YouTube-style watch page (video player + comments + related)
 ```
 
 ## Design System
@@ -429,13 +432,49 @@ NEXT_PUBLIC_BACKEND_URL=<render backend url>
 
 **Build:** Frontend passes `npm run build` clean (Next.js 16 + TypeScript)
 
+### 2026-02-10: Critical Fixes — Session 8 (Claude Opus)
+
+**Fix 1 — Dexie UpgradeError (BLOCKER):**
+- Root cause: Session 7 changed Dexie primary key from `++id` to `_id`, but Dexie cannot change primary keys via version upgrade — causes "UpgradeError: Not yet support for changing primary key" on any browser with existing data
+- Fix: Removed version(3) declaration, added `initDb()` function that wraps `db.open()` in try/catch — if UpgradeError, deletes old database and recreates fresh
+- Posts re-sync from backend via `pullChanges()` on next load (no data loss since all posts are in MongoDB)
+- Added `displayName` and `avatarUrl` to Post interface (prep for Phase 3)
+- Called `initDb()` in page.tsx useEffect on mount
+
+**Fix 2 — Merged Other AI Session (Likes, Comments, Share Pages, User Profiles):**
+Merged uncommitted work from another Claude session that built core social features:
+
+*Backend — New Routes + Schemas:*
+- NEW: `routes/postRoutes.js` — GET post by ID, POST like/unlike (with `likedBy` array), GET/POST/DELETE comments, auto-creates Notification on like/comment
+- NEW: `routes/notificationRoutes.js` — GET notifications, POST mark-all-read, GET unread-count
+- NEW: `routes/userRoutes.js` — GET `/users/search?q=name` (regex search), GET `/users/:userId` (public profile + post counts)
+- `config/db.js` — Added Comment + Notification schemas, `likedBy`/`displayName`/`avatarUrl` on PostSchema, `displayName`/`avatarUrl`/`bio` on UserSchema, stale `email_1` index auto-cleanup on startup
+- `server.js` — Mounted `/posts`, `/notifications`, `/users` routes, passes displayName/avatarUrl to conductor + long-video, added `/generate/short-video` endpoint
+- `services/conductor.js` — Accepts displayName/avatarUrl params, syncs them to User record on each generation
+
+*Frontend — New Pages + Components:*
+- NEW: `components/CommentsPanel.tsx` — TikTok-style slide-up panel, fetches/posts/deletes comments via API, displays user avatars + names
+- NEW: `/post/[id]/page.tsx` — Share link page: fetches post by ID from backend, renders media + user info + like/comment/share buttons + comments sidebar
+- NEW: `/watch/[id]/page.tsx` — YouTube-style watch page: video player (16:9 or 9:16), expandable description, comments section, related videos sidebar
+
+*Frontend — Modified Tabs:*
+- `HomeTab.tsx` — Like button calls `POST /posts/:id/like` API (tracks likedByMe + real count), comment button opens CommentsPanel, people search in feed (debounced), real avatars/names from post data
+- `CreateTab.tsx` — Sends `user.fullName` + `user.imageUrl` with every upload and AI generation request
+- `MessagesTab.tsx` — Upgraded from empty state to user search (search people by name via `/users/search`)
+- `uploadRoutes.js` — Stores displayName/avatarUrl on uploaded posts
+
+*Bug Fixes Applied:*
+- Fixed import path in `postRoutes.js` and `notificationRoutes.js`: `require('../middleware/auth')` → `require('../middleware/clerkAuth')` (wrong file name + wrong destructure)
+- Wired `searchQuery` prop from page.tsx to HomeTab for search functionality
+- Kept our `db.ts` (with `initDb()` for Dexie UpgradeError handling) and `page.tsx` (with `initDb()` call on mount)
+
+**Build:** Frontend passes `npm run build` clean — routes: `/`, `/post/[id]`, `/watch/[id]`
+
 ### NEXT SESSION PRIORITIES:
 1. **Follow/Friend system**: Follow schema in MongoDB, follow/unfollow endpoints, Follow button on profiles, real follower/following counts
 2. **User profile viewing**: Tap someone's avatar in feed/shorts to see their profile + Follow button
-3. **Search per section**: Feed search filters feed posts, Shorts search filters shorts (TikTok-style 2-column), Videos search filters videos, Messages search finds users
-4. **Full messaging**: Chat interface when tapping a user, text + image upload in chats (normal + AI), same daily rate limits for AI images in chat
-5. **Content sharing/links**: Copy link to share content anywhere on the platform and externally
-6. **Stripe Pro upgrade**: $10/month, wire webhook to actually upgrade user isPro status
-7. **Stories**: Upload photo stories (from camera roll), plus button on profile pic, swipe through
-8. **PWA manifest + service worker**
-9. **Likes/comments/share wired to backend**
+3. **Real-time messaging**: Chat interface with WebSocket/SSE, text + image in chats
+4. **Real NotificationsTab**: Wire to `/notifications` endpoint, show like/comment events with avatars
+5. **Stripe Pro upgrade**: $10/month, wire webhook to actually upgrade user isPro status
+6. **Stories**: Upload photo stories (from camera roll), plus button on profile pic, swipe through
+7. **PWA manifest + service worker**

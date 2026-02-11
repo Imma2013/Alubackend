@@ -17,6 +17,8 @@ export interface Post {
   originalPrompt?: string;
   caption?: string;
   visibility?: 'everyone' | 'followers' | 'private';
+  displayName?: string;  // User's display name (from Clerk)
+  avatarUrl?: string;     // User's profile picture URL (from Clerk)
 }
 
 export interface SyncState {
@@ -31,19 +33,39 @@ export class AluDexie extends Dexie {
   constructor() {
     super('aluDatabase');
 
-    // v3 → v4: Switch primary key from auto-increment (++id) to MongoDB _id
-    // This prevents duplicate posts when sync pulls the same post that was created locally
+    // Only declare the current schema version — no old versions
+    // Old databases with ++id primary key will be deleted and recreated (see initDb below)
     this.version(4).stores({
       posts: '_id, mediaType, timestamp, userId, synced, updatedAt',
-      syncState: 'id'
-    });
-
-    // Keep v3 declaration so Dexie knows the upgrade path
-    this.version(3).stores({
-      posts: '++id, mediaType, timestamp, userId, synced, updatedAt',
       syncState: 'id'
     });
   }
 }
 
+// Create the database instance
 export const db = new AluDexie();
+
+/**
+ * Initialize the database safely.
+ * If an UpgradeError occurs (e.g., from changing primary key), delete the old DB and recreate.
+ * Posts will re-sync from the backend via pullChanges() on next load.
+ */
+export async function initDb(): Promise<void> {
+  try {
+    await db.open();
+  } catch (err: unknown) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    if (
+      errorMsg.includes('UpgradeError') ||
+      errorMsg.includes('changing primary key') ||
+      errorMsg.includes('Not yet support')
+    ) {
+      console.warn('Dexie UpgradeError detected — deleting old database and recreating...');
+      await db.delete();
+      await db.open();
+      console.log('Database recreated successfully. Data will re-sync from server.');
+    } else {
+      throw err; // Re-throw non-upgrade errors
+    }
+  }
+}

@@ -1,25 +1,40 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { useAuth } from '@clerk/nextjs';
+import { useAuth, useUser } from '@clerk/nextjs';
 import { db, Post } from '../../db';
 import { pullChanges, pushChanges } from '../../syncService';
 import MediaItem from '../MediaItem';
-import { HeartIcon, CommentIcon, ShareIcon, BookmarkIcon } from '../icons';
+import { HeartIcon, CommentIcon, ShareIcon, BookmarkIcon, SearchIcon } from '../icons';
 import PostModal from '../PostModal';
+import CommentsPanel from '../CommentsPanel';
+
+interface UserResult {
+  userId: string;
+  displayName: string;
+  avatarUrl: string;
+  bio: string;
+}
 
 interface HomeTabProps {
   showAI: boolean;
   showNormal: boolean;
+  searchQuery?: string;
 }
 
-export default function HomeTab({ showAI, showNormal }: HomeTabProps) {
+export default function HomeTab({ showAI, showNormal, searchQuery = '' }: HomeTabProps) {
   const { getToken, isSignedIn } = useAuth();
-  const [likedPosts, setLikedPosts] = useState<Set<string>>(new Set());
+  const { user } = useUser();
+  const [likedPosts, setLikedPosts] = useState<Record<string, number>>({}); // postId -> like count
+  const [likedByMe, setLikedByMe] = useState<Set<string>>(new Set());
   const [savedPosts, setSavedPosts] = useState<Set<string>>(new Set());
   const [isSyncing, setIsSyncing] = useState(false);
   const [selectedPost, setSelectedPost] = useState<Post | null>(null);
+  const [commentsPostId, setCommentsPostId] = useState<string | null>(null);
+  const [peopleResults, setPeopleResults] = useState<UserResult[]>([]);
+  const [isSearchingPeople, setIsSearchingPeople] = useState(false);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Live query from Dexie — real posts
   const allPosts = useLiveQuery(
@@ -27,13 +42,58 @@ export default function HomeTab({ showAI, showNormal }: HomeTabProps) {
     []
   );
 
-  // Filter by AI/Normal toggles
+  // Debounced people search (Home tab is dual: people + posts)
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+
+    if (!searchQuery.trim()) {
+      setPeopleResults([]);
+      setIsSearchingPeople(false);
+      return;
+    }
+
+    debounceRef.current = setTimeout(async () => {
+      setIsSearchingPeople(true);
+      try {
+        const token = await getToken();
+        const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3001';
+        const res = await fetch(
+          `${backendUrl}/users/search?q=${encodeURIComponent(searchQuery.trim())}`,
+          { headers: token ? { 'Authorization': `Bearer ${token}` } : {} }
+        );
+        if (res.ok) {
+          const data = await res.json();
+          setPeopleResults(data.users || []);
+        }
+      } catch (err) {
+        console.error('People search failed:', err);
+      } finally {
+        setIsSearchingPeople(false);
+      }
+    }, 300);
+
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
+  }, [searchQuery, getToken]);
+
+  // Filter by AI/Normal toggles + search query
   const posts = allPosts?.filter((p: Post) => {
-    if (showAI && showNormal) return true;
-    if (showAI && !showNormal) return p.is_ai;
-    if (!showAI && showNormal) return !p.is_ai;
+    // AI/Normal filter
+    if (showAI && showNormal) { /* show all */ }
+    else if (showAI && !showNormal) { if (!p.is_ai) return false; }
+    else if (!showAI && showNormal) { if (p.is_ai) return false; }
+
+    // Search filter (matches safePrompt or displayName)
+    if (searchQuery.trim()) {
+      const q = searchQuery.trim().toLowerCase();
+      const matchPrompt = p.safePrompt?.toLowerCase().includes(q);
+      const matchName = p.displayName?.toLowerCase().includes(q);
+      if (!matchPrompt && !matchName) return false;
+    }
+
     return true;
   }) || [];
+
+  const isSearching = !!searchQuery.trim();
 
   // Sync on mount + every 60s
   useEffect(() => {
@@ -54,13 +114,28 @@ export default function HomeTab({ showAI, showNormal }: HomeTabProps) {
 
   const getPostKey = (post: Post) => post._id;
 
-  const toggleLike = (key: string) => {
-    setLikedPosts(prev => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
+  const toggleLike = async (postId: string) => {
+    const token = await getToken();
+    if (!token) return;
+    const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3001';
+    try {
+      const res = await fetch(`${backendUrl}/posts/${postId}/like`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ displayName: user?.fullName || '', avatarUrl: user?.imageUrl || '' }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setLikedPosts(prev => ({ ...prev, [postId]: data.likes }));
+        setLikedByMe(prev => {
+          const next = new Set(prev);
+          data.liked ? next.add(postId) : next.delete(postId);
+          return next;
+        });
+      }
+    } catch (err) {
+      console.error('Like failed:', err);
+    }
   };
 
   const toggleSave = (key: string) => {
@@ -111,6 +186,44 @@ export default function HomeTab({ showAI, showNormal }: HomeTabProps) {
         </div>
       )}
 
+      {/* People search results (only when searching) */}
+      {isSearching && (
+        <div className="px-4 py-3">
+          <h3 className="text-xs font-bold text-alu-text-tertiary uppercase tracking-wider mb-2">People</h3>
+          {isSearchingPeople ? (
+            <div className="flex items-center gap-2 py-2">
+              <div className="w-5 h-5 border-2 border-[var(--alu-primary)] border-t-transparent rounded-full animate-spin" />
+              <span className="text-xs text-alu-text-tertiary">Searching...</span>
+            </div>
+          ) : peopleResults.length > 0 ? (
+            <div className="flex gap-3 overflow-x-auto pb-2 -mx-1 px-1 scrollbar-hide">
+              {peopleResults.map((user) => (
+                <button
+                  key={user.userId}
+                  className="flex-shrink-0 flex flex-col items-center gap-1.5 p-3 rounded-xl bg-alu-surface hover:bg-[var(--alu-hover)] transition-colors w-[100px]"
+                >
+                  {user.avatarUrl ? (
+                    <img src={user.avatarUrl} alt="" className="w-12 h-12 rounded-full object-cover" />
+                  ) : (
+                    <div className="w-12 h-12 rounded-full bg-[var(--alu-primary-glow)] flex items-center justify-center text-sm font-bold text-[var(--alu-primary)]">
+                      {(user.displayName || 'U')[0].toUpperCase()}
+                    </div>
+                  )}
+                  <span className="text-xs font-semibold text-alu-text truncate w-full text-center">{user.displayName || 'User'}</span>
+                  {user.bio && <span className="text-[10px] text-alu-text-tertiary truncate w-full text-center">{user.bio}</span>}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <p className="text-xs text-alu-text-tertiary py-1">No people found</p>
+          )}
+          <div className="h-[1px] bg-alu-border mt-2" />
+          {posts.length > 0 && (
+            <h3 className="text-xs font-bold text-alu-text-tertiary uppercase tracking-wider mt-3 mb-1">Posts</h3>
+          )}
+        </div>
+      )}
+
       {/* Feed */}
       <div className="flex flex-col">
         {!allPosts && (
@@ -124,9 +237,9 @@ export default function HomeTab({ showAI, showNormal }: HomeTabProps) {
           <div className="py-16 text-center">
             <div className="w-16 h-16 rounded-full bg-alu-surface flex items-center justify-center mx-auto mb-4">
               <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--alu-text-tertiary)" strokeWidth="1.5" strokeLinecap="round">
-                <rect x="3" y="3" width="18" height="18" rx="2"/>
-                <circle cx="8.5" cy="8.5" r="1.5"/>
-                <path d="m21 15-5-5L5 21"/>
+                <rect x="3" y="3" width="18" height="18" rx="2" />
+                <circle cx="8.5" cy="8.5" r="1.5" />
+                <path d="m21 15-5-5L5 21" />
               </svg>
             </div>
             <p className="text-sm font-semibold text-alu-text mb-1">No posts yet</p>
@@ -141,17 +254,25 @@ export default function HomeTab({ showAI, showNormal }: HomeTabProps) {
             <article key={key} className="border-b border-alu-border-light">
               {/* Post Header */}
               <div className="flex items-center gap-3 px-4 py-3">
-                <div className="w-9 h-9 rounded-full bg-alu-surface flex items-center justify-center text-sm font-semibold text-alu-text-secondary">
-                  {(post.userId || 'U')[0].toUpperCase()}
-                </div>
+                {post.avatarUrl ? (
+                  <img
+                    src={post.avatarUrl}
+                    alt=""
+                    className="w-9 h-9 rounded-full object-cover"
+                  />
+                ) : (
+                  <div className="w-9 h-9 rounded-full bg-alu-surface flex items-center justify-center text-sm font-semibold text-alu-text-secondary">
+                    {(post.displayName || post.userId || 'U')[0].toUpperCase()}
+                  </div>
+                )}
                 <div className="flex-1 min-w-0">
                   <span className="font-semibold text-sm text-alu-text">
-                    {post.userId?.slice(0, 12) || 'Unknown'}
+                    {post.displayName || 'Alu User'}
                   </span>
                   <span className="text-xs text-alu-text-tertiary block">{timeAgo(post.timestamp)}</span>
                 </div>
                 <button className="text-alu-text-tertiary hover:text-alu-text transition-colors p-1">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2" /><circle cx="12" cy="12" r="2" /><circle cx="12" cy="19" r="2" /></svg>
                 </button>
               </div>
 
@@ -176,15 +297,14 @@ export default function HomeTab({ showAI, showNormal }: HomeTabProps) {
               <div className="flex items-center justify-between px-4 py-2.5">
                 <div className="flex items-center gap-4">
                   <button
-                    onClick={() => toggleLike(key)}
-                    className={`flex items-center gap-1.5 transition-all duration-200 ${
-                      likedPosts.has(key) ? 'text-[var(--alu-danger)]' : 'text-alu-text-secondary hover:text-alu-text'
-                    }`}
+                    onClick={() => toggleLike(post._id)}
+                    className={`flex items-center gap-1.5 transition-all duration-200 ${likedByMe.has(post._id) ? 'text-[var(--alu-danger)]' : 'text-alu-text-secondary hover:text-alu-text'
+                      }`}
                   >
                     <HeartIcon size={20} />
-                    <span className="text-xs font-medium">{(post.likes || 0) + (likedPosts.has(key) ? 1 : 0)}</span>
+                    <span className="text-xs font-medium">{likedPosts[post._id] ?? post.likes ?? 0}</span>
                   </button>
-                  <button className="flex items-center gap-1.5 text-alu-text-secondary hover:text-alu-text transition-colors">
+                  <button onClick={() => setCommentsPostId(post._id)} className="flex items-center gap-1.5 text-alu-text-secondary hover:text-alu-text transition-colors">
                     <CommentIcon size={20} />
                   </button>
                   <button
@@ -196,9 +316,8 @@ export default function HomeTab({ showAI, showNormal }: HomeTabProps) {
                 </div>
                 <button
                   onClick={() => toggleSave(key)}
-                  className={`transition-all duration-200 ${
-                    savedPosts.has(key) ? 'text-[var(--alu-primary)]' : 'text-alu-text-secondary hover:text-alu-text'
-                  }`}
+                  className={`transition-all duration-200 ${savedPosts.has(key) ? 'text-[var(--alu-primary)]' : 'text-alu-text-secondary hover:text-alu-text'
+                    }`}
                 >
                   <BookmarkIcon size={20} />
                 </button>
@@ -210,6 +329,13 @@ export default function HomeTab({ showAI, showNormal }: HomeTabProps) {
 
       {/* Post expand modal */}
       {selectedPost && <PostModal post={selectedPost} onClose={() => setSelectedPost(null)} />}
+
+      {/* Comments panel */}
+      <CommentsPanel
+        postId={commentsPostId || ''}
+        isOpen={!!commentsPostId}
+        onClose={() => setCommentsPostId(null)}
+      />
     </div>
   );
 }
