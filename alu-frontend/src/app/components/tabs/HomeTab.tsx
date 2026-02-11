@@ -21,9 +21,10 @@ interface HomeTabProps {
   showAI: boolean;
   showNormal: boolean;
   searchQuery?: string;
+  onViewUser?: (userId: string) => void;
 }
 
-export default function HomeTab({ showAI, showNormal, searchQuery = '' }: HomeTabProps) {
+export default function HomeTab({ showAI, showNormal, searchQuery = '', onViewUser }: HomeTabProps) {
   const { getToken, isSignedIn } = useAuth();
   const { user } = useUser();
   const [likedPosts, setLikedPosts] = useState<Record<string, number>>({}); // postId -> like count
@@ -197,20 +198,21 @@ export default function HomeTab({ showAI, showNormal, searchQuery = '' }: HomeTa
             </div>
           ) : peopleResults.length > 0 ? (
             <div className="flex gap-3 overflow-x-auto pb-2 -mx-1 px-1 scrollbar-hide">
-              {peopleResults.map((user) => (
+              {peopleResults.map((u) => (
                 <button
-                  key={user.userId}
+                  key={u.userId}
+                  onClick={() => onViewUser?.(u.userId)}
                   className="flex-shrink-0 flex flex-col items-center gap-1.5 p-3 rounded-xl bg-alu-surface hover:bg-[var(--alu-hover)] transition-colors w-[100px]"
                 >
-                  {user.avatarUrl ? (
-                    <img src={user.avatarUrl} alt="" className="w-12 h-12 rounded-full object-cover" />
+                  {u.avatarUrl ? (
+                    <img src={u.avatarUrl} alt="" className="w-12 h-12 rounded-full object-cover" />
                   ) : (
                     <div className="w-12 h-12 rounded-full bg-[var(--alu-primary-glow)] flex items-center justify-center text-sm font-bold text-[var(--alu-primary)]">
-                      {(user.displayName || 'U')[0].toUpperCase()}
+                      {(u.displayName || 'U')[0].toUpperCase()}
                     </div>
                   )}
-                  <span className="text-xs font-semibold text-alu-text truncate w-full text-center">{user.displayName || 'User'}</span>
-                  {user.bio && <span className="text-[10px] text-alu-text-tertiary truncate w-full text-center">{user.bio}</span>}
+                  <span className="text-xs font-semibold text-alu-text truncate w-full text-center">{u.displayName || 'User'}</span>
+                  {u.bio && <span className="text-[10px] text-alu-text-tertiary truncate w-full text-center">{u.bio}</span>}
                 </button>
               ))}
             </div>
@@ -254,21 +256,25 @@ export default function HomeTab({ showAI, showNormal, searchQuery = '' }: HomeTa
             <article key={key} className="border-b border-alu-border-light">
               {/* Post Header */}
               <div className="flex items-center gap-3 px-4 py-3">
-                {post.avatarUrl ? (
-                  <img
-                    src={post.avatarUrl}
-                    alt=""
-                    className="w-9 h-9 rounded-full object-cover"
-                  />
-                ) : (
-                  <div className="w-9 h-9 rounded-full bg-alu-surface flex items-center justify-center text-sm font-semibold text-alu-text-secondary">
-                    {(post.displayName || post.userId || 'U')[0].toUpperCase()}
-                  </div>
-                )}
+                <button onClick={() => post.userId && onViewUser?.(post.userId)} className="shrink-0">
+                  {post.avatarUrl ? (
+                    <img
+                      src={post.avatarUrl}
+                      alt=""
+                      className="w-9 h-9 rounded-full object-cover"
+                    />
+                  ) : (
+                    <div className="w-9 h-9 rounded-full bg-alu-surface flex items-center justify-center text-sm font-semibold text-alu-text-secondary">
+                      {(post.displayName || post.userId || 'U')[0].toUpperCase()}
+                    </div>
+                  )}
+                </button>
                 <div className="flex-1 min-w-0">
-                  <span className="font-semibold text-sm text-alu-text">
-                    {post.displayName || 'Alu User'}
-                  </span>
+                  <button onClick={() => post.userId && onViewUser?.(post.userId)} className="hover:underline">
+                    <span className="font-semibold text-sm text-alu-text">
+                      {post.displayName || 'Alu User'}
+                    </span>
+                  </button>
                   <span className="text-xs text-alu-text-tertiary block">{timeAgo(post.timestamp)}</span>
                 </div>
                 <button className="text-alu-text-tertiary hover:text-alu-text transition-colors p-1">
@@ -328,7 +334,7 @@ export default function HomeTab({ showAI, showNormal, searchQuery = '' }: HomeTa
       </div>
 
       {/* Post expand modal */}
-      {selectedPost && <PostModal post={selectedPost} onClose={() => setSelectedPost(null)} />}
+      {selectedPost && <PostModal post={selectedPost} onClose={() => setSelectedPost(null)} onViewUser={onViewUser} />}
 
       {/* Comments panel */}
       <CommentsPanel

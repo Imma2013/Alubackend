@@ -7,7 +7,6 @@ import {
   HomeIcon,
   ShortsIcon,
   VideosIcon,
-  MessagesIcon,
   NotificationsIcon,
   ProfileIcon,
   CreateIcon,
@@ -17,23 +16,34 @@ import {
 import HomeTab from './components/tabs/HomeTab';
 import ShortsTab from './components/tabs/ShortsTab';
 import VideosTab from './components/tabs/VideosTab';
-import MessagesTab from './components/tabs/MessagesTab';
 import CreateTab from './components/tabs/CreateTab';
 import ProfileTab from './components/tabs/ProfileTab';
 import NotificationsTab from './components/tabs/NotificationsTab';
 
-type Tab = 'home' | 'shorts' | 'videos' | 'messages' | 'create' | 'profile' | 'notifications';
+type Tab = 'home' | 'shorts' | 'videos' | 'create' | 'profile' | 'notifications';
 
 const TABS_WITH_HEADER: Tab[] = ['home', 'shorts', 'videos'];
 
 export default function App() {
   const { isSignedIn, isLoaded } = useUser();
   const [activeTab, setActiveTab] = useState<Tab>('home');
+  const [viewUserId, setViewUserId] = useState<string | null>(null);
 
   // Initialize Dexie on mount — handles UpgradeError from primary key change
   useEffect(() => {
     initDb().catch(err => console.error('Failed to initialize database:', err));
   }, []);
+
+  const handleViewUser = (userId: string) => {
+    setViewUserId(userId);
+    setActiveTab('profile');
+  };
+
+  const handleTabChange = (tab: Tab) => {
+    if (tab !== 'profile') setViewUserId(null);
+    setActiveTab(tab);
+  };
+
   const [showAI, setShowAI] = useState(true);
   const [showNormal, setShowNormal] = useState(true);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -79,7 +89,6 @@ export default function App() {
     { key: 'home', label: 'Home', icon: (a) => <HomeIcon active={a} /> },
     { key: 'shorts', label: 'Shorts', icon: (a) => <ShortsIcon active={a} /> },
     { key: 'videos', label: 'Videos', icon: (a) => <VideosIcon active={a} /> },
-    { key: 'messages', label: 'Messages', icon: (a) => <MessagesIcon active={a} /> },
     { key: 'notifications', label: 'Notifications', icon: (a) => <NotificationsIcon active={a} /> },
     { key: 'profile', label: 'Profile', icon: (a) => <ProfileIcon active={a} /> },
   ];
@@ -98,7 +107,7 @@ export default function App() {
       <header className="md:hidden fixed top-0 left-0 right-0 z-50 bg-white/95 backdrop-blur-md border-b border-[var(--alu-border)]" style={{ height: 'var(--alu-header-height)' }}>
         <div className="flex items-center h-full px-3 gap-2">
           {/* Logo */}
-          <button onClick={() => setActiveTab('home')} className="shrink-0 mr-1">
+          <button onClick={() => handleTabChange('home')} className="shrink-0 mr-1">
             <AluLogo size={22} />
           </button>
 
@@ -162,16 +171,10 @@ export default function App() {
 
           {/* Notifications + Messages */}
           <button
-            onClick={() => setActiveTab('notifications')}
+            onClick={() => handleTabChange('notifications')}
             className={`relative p-1.5 shrink-0 transition-colors ${activeTab === 'notifications' ? 'text-[var(--alu-primary)]' : 'text-[var(--alu-text-secondary)] hover:text-[var(--alu-text)]'}`}
           >
             <NotificationsIcon size={20} active={activeTab === 'notifications'} />
-          </button>
-          <button
-            onClick={() => setActiveTab('messages')}
-            className={`relative p-1.5 shrink-0 transition-colors ${activeTab === 'messages' ? 'text-[var(--alu-primary)]' : 'text-[var(--alu-text-secondary)] hover:text-[var(--alu-text)]'}`}
-          >
-            <MessagesIcon size={20} active={activeTab === 'messages'} />
           </button>
         </div>
       </header>
@@ -180,7 +183,7 @@ export default function App() {
       <aside className="hidden md:flex fixed top-0 left-0 bottom-0 z-40 flex-col border-r border-[var(--alu-border)]" style={{ width: 'var(--alu-sidebar-width)' }}>
         {/* Logo */}
         <div className="h-16 flex items-center px-6">
-          <button onClick={() => setActiveTab('home')}>
+          <button onClick={() => handleTabChange('home')}>
             <AluLogo size={28} />
           </button>
         </div>
@@ -192,7 +195,7 @@ export default function App() {
             return (
               <button
                 key={item.key}
-                onClick={() => setActiveTab(item.key)}
+                onClick={() => handleTabChange(item.key)}
                 className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200 w-full text-left ${isActive
                     ? 'bg-[var(--alu-primary-glow)] text-[var(--alu-primary-dark)] font-semibold'
                     : 'text-[var(--alu-text-secondary)] hover:bg-[var(--alu-hover)] hover:text-[var(--alu-text)]'
@@ -206,7 +209,7 @@ export default function App() {
 
           {/* Create Button */}
           <button
-            onClick={() => setActiveTab('create')}
+            onClick={() => handleTabChange('create')}
             className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold mt-4 transition-all duration-200 w-full text-left text-white hover:opacity-90 create-btn-glow`}
             style={{ background: 'linear-gradient(135deg, var(--alu-primary), var(--alu-primary-light))' }}
           >
@@ -287,12 +290,11 @@ export default function App() {
 
         {/* Tab Content */}
         <div className="w-full">
-          {activeTab === 'home' && <HomeTab showAI={showAI} showNormal={showNormal} searchQuery={searchQuery} />}
+          {activeTab === 'home' && <HomeTab showAI={showAI} showNormal={showNormal} searchQuery={searchQuery} onViewUser={handleViewUser} />}
           {activeTab === 'shorts' && <ShortsTab />}
           {activeTab === 'videos' && <VideosTab />}
-          {activeTab === 'messages' && <MessagesTab />}
           {activeTab === 'create' && <CreateTab />}
-          {activeTab === 'profile' && <ProfileTab />}
+          {activeTab === 'profile' && <ProfileTab viewUserId={viewUserId} onBack={() => setViewUserId(null)} onViewUser={handleViewUser} />}
           {activeTab === 'notifications' && <NotificationsTab />}
         </div>
       </main>
@@ -308,7 +310,7 @@ export default function App() {
               return (
                 <button
                   key={item.key}
-                  onClick={() => setActiveTab('create')}
+                  onClick={() => handleTabChange('create')}
                   className="flex items-center justify-center w-11 h-11 rounded-xl text-white transition-all duration-200 active:scale-95 create-btn-glow"
                   style={{ background: 'linear-gradient(135deg, var(--alu-primary), var(--alu-primary-light))' }}
                 >
@@ -320,7 +322,7 @@ export default function App() {
             return (
               <button
                 key={item.key}
-                onClick={() => setActiveTab(item.key)}
+                onClick={() => handleTabChange(item.key)}
                 className={`flex flex-col items-center justify-center gap-0.5 py-1 px-3 transition-colors duration-200 ${isActive ? 'text-[var(--alu-primary)]' : 'text-[var(--alu-text-tertiary)]'
                   }`}
               >

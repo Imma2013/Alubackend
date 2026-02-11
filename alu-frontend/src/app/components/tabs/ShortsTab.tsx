@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, Post } from '../../db';
 import MediaItem from '../MediaItem';
@@ -15,8 +15,30 @@ export default function ShortsTab({ searchQuery = '' }: ShortsTabProps) {
   const [liked, setLiked] = useState<Set<string>>(new Set());
   const [swipeOffset, setSwipeOffset] = useState(0);
   const [isSwiping, setIsSwiping] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
+  const videoContainerRef = useRef<HTMLDivElement>(null);
   const touchStartY = useRef(0);
   const touchStartTime = useRef(0);
+
+  // Reset pause state when switching shorts
+  useEffect(() => {
+    setIsPaused(false);
+  }, [currentIndex]);
+
+  const handleTapVideo = () => {
+    const container = videoContainerRef.current;
+    if (!container) return;
+    const video = container.querySelector('video');
+    if (video) {
+      if (video.paused) {
+        video.play();
+        setIsPaused(false);
+      } else {
+        video.pause();
+        setIsPaused(true);
+      }
+    }
+  };
 
   // Real data from Dexie — shorts
   const allShorts = useLiveQuery(
@@ -136,21 +158,36 @@ export default function ShortsTab({ searchQuery = '' }: ShortsTabProps) {
             transition: isSwiping ? 'none' : 'transform 0.3s ease-out',
           }}
         >
-          {/* Media content */}
-          <div className="absolute inset-0">
+          {/* Media content — tap to pause/play */}
+          <div className="absolute inset-0" ref={videoContainerRef} onClick={handleTapVideo}>
             <MediaItem post={short} />
           </div>
 
+          {/* Pause indicator */}
+          {isPaused && (
+            <div className="absolute inset-0 flex items-center justify-center z-10 pointer-events-none">
+              <div className="w-16 h-16 rounded-full bg-black/40 backdrop-blur-sm flex items-center justify-center">
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="white">
+                  <polygon points="8,5 19,12 8,19" />
+                </svg>
+              </div>
+            </div>
+          )}
+
           {/* Bottom gradient */}
-          <div className="absolute bottom-0 left-0 right-0 h-1/2 bg-gradient-to-t from-black/70 to-transparent" />
+          <div className="absolute bottom-0 left-0 right-0 h-1/2 bg-gradient-to-t from-black/70 to-transparent pointer-events-none" />
 
           {/* Bottom info */}
-          <div className="absolute bottom-0 left-0 right-16 p-4">
+          <div className="absolute bottom-0 left-0 right-16 p-4 pointer-events-none">
             <div className="flex items-center gap-2 mb-2">
-              <div className="w-8 h-8 rounded-full bg-white/20 backdrop-blur-sm flex items-center justify-center text-white text-xs font-bold">
-                {(short.userId || 'U')[0].toUpperCase()}
-              </div>
-              <span className="text-white font-semibold text-sm">{short.userId?.slice(0, 12) || 'User'}</span>
+              {short.avatarUrl ? (
+                <img src={short.avatarUrl} alt="" className="w-8 h-8 rounded-full object-cover" />
+              ) : (
+                <div className="w-8 h-8 rounded-full bg-white/20 backdrop-blur-sm flex items-center justify-center text-white text-xs font-bold">
+                  {(short.displayName || short.userId || 'U')[0].toUpperCase()}
+                </div>
+              )}
+              <span className="text-white font-semibold text-sm">{short.displayName || 'Alu User'}</span>
             </div>
             {short.safePrompt && short.safePrompt !== 'User upload' && (
               <p className="text-white text-sm leading-snug">{short.safePrompt}</p>

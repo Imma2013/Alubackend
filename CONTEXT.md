@@ -469,12 +469,36 @@ Merged uncommitted work from another Claude session that built core social featu
 - Kept our `db.ts` (with `initDb()` for Dexie UpgradeError handling) and `page.tsx` (with `initDb()` call on mount)
 
 **Build:** Frontend passes `npm run build` clean — routes: `/`, `/post/[id]`, `/watch/[id]`
+**Pushed:** Backend → `b26f651` on Alubackend.git | Frontend → `f73e401` on Alufrontend.git
+
+### 2026-02-11: Feed UX, Profile Viewing, Video Pause — Session 9 (Claude Opus)
+
+**1. Removed Messages Tab (deferred to future):**
+- Removed MessagesTab import, nav entry, and rendering from `page.tsx`
+- MessagesTab.tsx file kept for later — user said "we will add that later"
+
+**2. View Other Users' Profiles:**
+- `page.tsx`: Added `viewUserId` state, `handleViewUser()` callback, `handleTabChange()` (clears viewUserId on non-profile tabs), passes `onViewUser` to HomeTab and ProfileTab
+- `ProfileTab.tsx`: Dual-mode — own profile (Clerk data, Dexie posts, Edit Profile, Settings) vs other user (fetches `GET /users/:userId` for profile data, `POST /sync/pull` filtered by userId for their posts, back arrow, "Follow (Coming Soon)" greyed button, no settings/edit/logout)
+
+**3. Clickable Names/Avatars in Feed:**
+- `HomeTab.tsx`: Added `onViewUser` prop. People search results now navigate to profile on click. Post header avatar + displayName wrapped in clickable `<button>` with `hover:underline`. Passes `onViewUser` to PostModal.
+
+**4. PostModal Improvements:**
+- `PostModal.tsx`: Added user info section (clickable avatar + name → opens profile + closes modal). Like button now calls real API (`POST /posts/:id/like`) with auth token. Comment button opens embedded CommentsPanel. Added `onViewUser` prop.
+
+**5. Tap-to-Pause on Shorts:**
+- `ShortsTab.tsx`: Tap video area → toggles pause/play via DOM query for `<video>`. Pause indicator: translucent circle with play icon in center. Resets on swipe to new short. Also fixed avatar/displayName display (was showing raw userId).
+
+**6. VideosTab → Watch Page:**
+- `VideosTab.tsx`: Added `useRouter`, click on video thumbnail navigates to `/watch/[id]`. Fixed avatar/displayName display (was showing raw userId).
+
+**Build:** Frontend passes `npm run build` clean — routes: `/`, `/post/[id]`, `/watch/[id]`
 
 ### NEXT SESSION PRIORITIES:
 1. **Follow/Friend system**: Follow schema in MongoDB, follow/unfollow endpoints, Follow button on profiles, real follower/following counts
-2. **User profile viewing**: Tap someone's avatar in feed/shorts to see their profile + Follow button
-3. **Real-time messaging**: Chat interface with WebSocket/SSE, text + image in chats
-4. **Real NotificationsTab**: Wire to `/notifications` endpoint, show like/comment events with avatars
-5. **Stripe Pro upgrade**: $10/month, wire webhook to actually upgrade user isPro status
-6. **Stories**: Upload photo stories (from camera roll), plus button on profile pic, swipe through
-7. **PWA manifest + service worker**
+2. **Real-time messaging**: Chat interface with WebSocket/SSE, text + image in chats
+3. **Real NotificationsTab**: Wire to `/notifications` endpoint, show like/comment events with avatars
+4. **Stripe Pro upgrade**: $10/month, wire webhook to actually upgrade user isPro status
+5. **Stories**: Upload photo stories (from camera roll), plus button on profile pic, swipe through
+6. **PWA manifest + service worker**

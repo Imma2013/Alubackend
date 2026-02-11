@@ -1,6 +1,7 @@
 'use client';
 
 import { useLiveQuery } from 'dexie-react-hooks';
+import { useRouter } from 'next/navigation';
 import { db, Post } from '../../db';
 import MediaItem from '../MediaItem';
 import { VideosIcon } from '../icons';
@@ -10,6 +11,7 @@ interface VideosTabProps {
 }
 
 export default function VideosTab({ searchQuery = '' }: VideosTabProps) {
+  const router = useRouter();
   const videos = useLiveQuery(
     async () => {
       const all = await db.posts.where('mediaType').equals('video').toArray();
@@ -47,7 +49,7 @@ export default function VideosTab({ searchQuery = '' }: VideosTabProps) {
         {videoList.map((video) => {
           const key = video._id;
           return (
-            <button key={key} className="group text-left w-full">
+            <button key={key} className="group text-left w-full" onClick={() => router.push(`/watch/${video._id}`)}>
               {/* Thumbnail */}
               <div className="w-full aspect-video rounded-xl overflow-hidden relative bg-alu-surface">
                 {video.thumbnailUrl ? (
@@ -71,15 +73,19 @@ export default function VideosTab({ searchQuery = '' }: VideosTabProps) {
               </div>
               {/* Info */}
               <div className="flex gap-2.5 mt-2.5 px-0.5">
-                <div className="w-8 h-8 rounded-full bg-alu-surface flex items-center justify-center text-xs font-semibold text-alu-text-secondary shrink-0 mt-0.5">
-                  {(video.userId || 'U')[0].toUpperCase()}
-                </div>
+                {video.avatarUrl ? (
+                  <img src={video.avatarUrl} alt="" className="w-8 h-8 rounded-full object-cover shrink-0 mt-0.5" />
+                ) : (
+                  <div className="w-8 h-8 rounded-full bg-alu-surface flex items-center justify-center text-xs font-semibold text-alu-text-secondary shrink-0 mt-0.5">
+                    {(video.displayName || video.userId || 'U')[0].toUpperCase()}
+                  </div>
+                )}
                 <div className="min-w-0 flex-1">
                   <h3 className="text-sm font-semibold text-alu-text leading-snug line-clamp-2 group-hover:text-[var(--alu-primary-dark)] transition-colors">
                     {video.safePrompt || 'Video'}
                   </h3>
                   <p className="text-xs text-alu-text-tertiary mt-0.5">
-                    {video.userId?.slice(0, 12) || 'User'}
+                    {video.displayName || 'Alu User'}
                   </p>
                 </div>
               </div>

@@ -1,18 +1,45 @@
 'use client';
 
 import { useState } from 'react';
+import { useAuth, useUser } from '@clerk/nextjs';
 import { Post } from '../db';
 import MediaItem from './MediaItem';
 import { HeartIcon, CommentIcon, ShareIcon, BookmarkIcon } from './icons';
+import CommentsPanel from './CommentsPanel';
 
 interface PostModalProps {
   post: Post;
   onClose: () => void;
+  onViewUser?: (userId: string) => void;
 }
 
-export default function PostModal({ post, onClose }: PostModalProps) {
-  const [liked, setLiked] = useState(false);
+export default function PostModal({ post, onClose, onViewUser }: PostModalProps) {
+  const { getToken } = useAuth();
+  const { user } = useUser();
+  const [likeCount, setLikeCount] = useState(post.likes || 0);
+  const [likedByMe, setLikedByMe] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [commentsOpen, setCommentsOpen] = useState(false);
+
+  const toggleLike = async () => {
+    const token = await getToken();
+    if (!token) return;
+    const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3001';
+    try {
+      const res = await fetch(`${backendUrl}/posts/${post._id}/like`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ displayName: user?.fullName || '', avatarUrl: user?.imageUrl || '' }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setLikeCount(data.likes);
+        setLikedByMe(data.liked);
+      }
+    } catch (err) {
+      console.error('Like failed:', err);
+    }
+  };
 
   const handleShare = async () => {
     const shareUrl = `${window.location.origin}/post/${post._id}`;
@@ -21,19 +48,21 @@ export default function PostModal({ post, onClose }: PostModalProps) {
       text: post.safePrompt || 'Shared from Alu',
       url: shareUrl,
     };
-
     try {
       if (navigator.share) {
         await navigator.share(shareData);
       } else {
         await navigator.clipboard.writeText(shareUrl);
-        // Brief visual feedback handled via state if needed
       }
     } catch {
-      // User cancelled share or clipboard failed
-      try {
-        await navigator.clipboard.writeText(shareUrl);
-      } catch { /* silent */ }
+      try { await navigator.clipboard.writeText(shareUrl); } catch { /* silent */ }
+    }
+  };
+
+  const handleViewUser = () => {
+    if (post.userId && onViewUser) {
+      onViewUser(post.userId);
+      onClose();
     }
   };
 
@@ -88,17 +117,39 @@ export default function PostModal({ post, onClose }: PostModalProps) {
 
         {/* Content */}
         <div className="flex-1 overflow-y-auto">
+          {/* User Info */}
+          <div className="flex items-center gap-3 px-4 py-3 border-b border-[var(--alu-border)]">
+            <button onClick={handleViewUser} className="shrink-0">
+              {post.avatarUrl ? (
+                <img src={post.avatarUrl} alt="" className="w-9 h-9 rounded-full object-cover" />
+              ) : (
+                <div className="w-9 h-9 rounded-full bg-alu-surface flex items-center justify-center text-sm font-semibold text-alu-text-secondary">
+                  {(post.displayName || 'U')[0].toUpperCase()}
+                </div>
+              )}
+            </button>
+            <div className="flex-1 min-w-0">
+              <button onClick={handleViewUser} className="hover:underline">
+                <span className="font-semibold text-sm text-alu-text">{post.displayName || 'Alu User'}</span>
+              </button>
+              <span className="text-xs text-alu-text-tertiary block">{timeAgo(post.timestamp)}</span>
+            </div>
+          </div>
+
           {/* Actions */}
           <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--alu-border)]">
             <div className="flex items-center gap-4">
               <button
-                onClick={() => setLiked(!liked)}
-                className={`flex items-center gap-1.5 transition-all ${liked ? 'text-[var(--alu-danger)]' : 'text-alu-text-secondary hover:text-alu-text'}`}
+                onClick={toggleLike}
+                className={`flex items-center gap-1.5 transition-all ${likedByMe ? 'text-[var(--alu-danger)]' : 'text-alu-text-secondary hover:text-alu-text'}`}
               >
                 <HeartIcon size={22} />
-                <span className="text-xs font-medium">{(post.likes || 0) + (liked ? 1 : 0)}</span>
+                <span className="text-xs font-medium">{likeCount}</span>
               </button>
-              <button className="text-alu-text-secondary hover:text-alu-text transition-colors">
+              <button
+                onClick={() => setCommentsOpen(!commentsOpen)}
+                className="text-alu-text-secondary hover:text-alu-text transition-colors"
+              >
                 <CommentIcon size={22} />
               </button>
               <button
@@ -122,13 +173,15 @@ export default function PostModal({ post, onClose }: PostModalProps) {
               <p className="text-sm leading-relaxed text-alu-text">{post.safePrompt}</p>
             </div>
           )}
-
-          {/* Timestamp */}
-          <div className="px-4 pb-4">
-            <span className="text-[11px] text-alu-text-tertiary">{timeAgo(post.timestamp)}</span>
-          </div>
         </div>
       </div>
+
+      {/* Comments panel */}
+      <CommentsPanel
+        postId={post._id}
+        isOpen={commentsOpen}
+        onClose={() => setCommentsOpen(false)}
+      />
     </div>
   );
 }
