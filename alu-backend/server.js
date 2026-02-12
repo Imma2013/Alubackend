@@ -77,19 +77,28 @@ app.post('/generate', clerkAuth, async (req, res) => {
   }
 });
 
-// Usage endpoint — returns real daily counts
+// Usage endpoint — returns real daily counts + bonus credits
 app.get('/usage', clerkAuth, async (req, res) => {
   try {
     const userId = req.auth.sub;
-    let user = await User.findOne({ userId });
-    if (!user) {
-      user = await User.create({ userId });
-    }
+    let user = await User.findOneAndUpdate(
+      { userId },
+      { $setOnInsert: { userId } },
+      { upsert: true, new: true }
+    );
+    const proMultiplier = user.isPro ? 10 : 1;
     res.json({
       dailyImages: user.dailyImages || 0,
       dailyShorts: user.dailyShorts || 0,
       dailyLongVids: user.dailyLongVids || 0,
-      limits: { image: 3, short: 2, long: 1 },
+      bonusImages: user.bonusImages || 0,
+      bonusShorts: user.bonusShorts || 0,
+      bonusLongVids: user.bonusLongVids || 0,
+      limits: {
+        image: 3 * proMultiplier,
+        short: 2 * proMultiplier,
+        long: 1 * proMultiplier,
+      },
       isPro: user.isPro || false,
     });
   } catch (error) {

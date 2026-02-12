@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { useUser, useClerk } from '@clerk/nextjs';
+import { useUser, useClerk, useAuth } from '@clerk/nextjs';
 import { db, Post } from '../../db';
 import MediaItem from '../MediaItem';
 import { SettingsIcon, ShieldIcon, FileTextIcon, LogOutIcon } from '../icons';
@@ -25,12 +25,17 @@ interface OtherUserProfile {
   avatarUrl: string;
   bio: string;
   isPro: boolean;
+  followersCount: number;
+  followingCount: number;
+  followers: string[];
+  following: string[];
   counts: { posts: number; shorts: number; videos: number };
 }
 
 export default function ProfileTab({ viewUserId, onBack, onViewUser }: ProfileTabProps) {
   const { user } = useUser();
   const { signOut } = useClerk();
+  const { getToken } = useAuth();
   const userId = user?.id;
   const isOwnProfile = !viewUserId || viewUserId === userId;
 
@@ -43,11 +48,35 @@ export default function ProfileTab({ viewUserId, onBack, onViewUser }: ProfileTa
   const [profileShowNormal, setProfileShowNormal] = useState(true);
   const [copiedLink, setCopiedLink] = useState(false);
   const [selectedPost, setSelectedPost] = useState<Post | null>(null);
+  const [showUpgradeModal, setShowUpgradeModal] = useState(false);
 
   // Other user state
   const [otherUser, setOtherUser] = useState<OtherUserProfile | null>(null);
   const [otherUserPosts, setOtherUserPosts] = useState<Post[]>([]);
   const [loadingProfile, setLoadingProfile] = useState(false);
+
+  // Follow state
+  const [isFollowing, setIsFollowing] = useState(false);
+  const [followersCount, setFollowersCount] = useState(0);
+  const [followingCount, setFollowingCount] = useState(0);
+  const [ownFollowersCount, setOwnFollowersCount] = useState(0);
+  const [ownFollowingCount, setOwnFollowingCount] = useState(0);
+
+  const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3001';
+
+  // Fetch own follower counts
+  useEffect(() => {
+    if (!isOwnProfile || !userId) return;
+    fetch(`${backendUrl}/users/${userId}`)
+      .then(res => res.ok ? res.json() : null)
+      .then(data => {
+        if (data) {
+          setOwnFollowersCount(data.followersCount || 0);
+          setOwnFollowingCount(data.followingCount || 0);
+        }
+      })
+      .catch(() => {});
+  }, [isOwnProfile, userId, backendUrl]);
 
   // Fetch other user's profile + posts when viewing someone else
   useEffect(() => {
@@ -59,9 +88,7 @@ export default function ProfileTab({ viewUserId, onBack, onViewUser }: ProfileTa
 
     setLoadingProfile(true);
     setActiveContentTab('posts');
-    const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3001';
 
-    // Fetch profile and posts in parallel
     Promise.all([
       fetch(`${backendUrl}/users/${viewUserId}`)
         .then(res => res.ok ? res.json() : null)
@@ -74,13 +101,18 @@ export default function ProfileTab({ viewUserId, onBack, onViewUser }: ProfileTa
         .then(res => res.ok ? res.json() : { changes: [] })
         .catch(() => ({ changes: [] })),
     ]).then(([profileData, syncData]) => {
-      if (profileData) setOtherUser(profileData);
+      if (profileData) {
+        setOtherUser(profileData);
+        setFollowersCount(profileData.followersCount || 0);
+        setFollowingCount(profileData.followingCount || 0);
+        setIsFollowing(profileData.followers?.includes(userId || '') || false);
+      }
       const userPosts = (syncData.changes || [])
         .filter((p: Post) => p.userId === viewUserId)
         .sort((a: Post, b: Post) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
       setOtherUserPosts(userPosts);
     }).finally(() => setLoadingProfile(false));
-  }, [viewUserId, isOwnProfile]);
+  }, [viewUserId, isOwnProfile, userId, backendUrl]);
 
   // Real data from Dexie — own posts
   const ownPosts = useLiveQuery(
@@ -91,7 +123,6 @@ export default function ProfileTab({ viewUserId, onBack, onViewUser }: ProfileTa
     [userId, isOwnProfile]
   );
 
-  // Use the right post array based on mode
   const userPosts = isOwnProfile ? (ownPosts || []) : otherUserPosts;
 
   const toggleProfileAI = () => {
@@ -117,7 +148,6 @@ export default function ProfileTab({ viewUserId, onBack, onViewUser }: ProfileTa
         { key: 'videos', label: 'Videos' },
       ];
 
-  // Filter by content tab
   const tabFiltered = userPosts.filter((p: Post) => {
     if (activeContentTab === 'posts') return p.mediaType === 'image';
     if (activeContentTab === 'shorts') return p.mediaType === 'video' && (!p.videoType || p.videoType === 'short');
@@ -125,7 +155,6 @@ export default function ProfileTab({ viewUserId, onBack, onViewUser }: ProfileTa
     return true;
   });
 
-  // Filter by AI/Normal
   const currentContent = tabFiltered.filter((p: Post) => {
     if (profileShowAI && profileShowNormal) return true;
     if (profileShowAI && !profileShowNormal) return p.is_ai;
@@ -133,13 +162,11 @@ export default function ProfileTab({ viewUserId, onBack, onViewUser }: ProfileTa
     return true;
   });
 
-  // Own profile display info
   const totalPosts = userPosts.length;
   const ownDisplayName = user?.firstName || user?.username || 'You';
   const ownAvatarLetter = ownDisplayName[0]?.toUpperCase() || 'U';
   const ownBio = (user?.unsafeMetadata?.bio as string) || 'Creating on Alu';
 
-  // Other user display info
   const otherDisplayName = otherUser?.displayName || 'User';
   const otherAvatarLetter = otherDisplayName[0]?.toUpperCase() || 'U';
   const otherBio = otherUser?.bio || '';
@@ -162,7 +189,60 @@ export default function ProfileTab({ viewUserId, onBack, onViewUser }: ProfileTa
     }
   };
 
-  // Loading state for other profiles
+  const handleFollow = async () => {
+    const token = await getToken();
+    if (!token || !viewUserId) return;
+    const endpoint = isFollowing ? 'unfollow' : 'follow';
+    try {
+      const res = await fetch(`${backendUrl}/users/${viewUserId}/${endpoint}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ displayName: user?.fullName || '', avatarUrl: user?.imageUrl || '' }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setIsFollowing(data.followed);
+        setFollowersCount(prev => data.followed ? prev + 1 : Math.max(0, prev - 1));
+      }
+    } catch (err) {
+      console.error('Follow/unfollow failed:', err);
+    }
+  };
+
+  const handlePostDeleted = (postId: string) => {
+    setSelectedPost(null);
+    // Force re-render by removing from local state if viewing other user
+    if (!isOwnProfile) {
+      setOtherUserPosts(prev => prev.filter(p => p._id !== postId));
+    }
+  };
+
+  const handleUpgrade = async (mode: 'subscription' | 'payment') => {
+    const token = await getToken();
+    if (!token) return;
+    try {
+      // These priceIds need to be created in Stripe Dashboard
+      // For now, use env vars or placeholder
+      const priceId = mode === 'subscription'
+        ? (process.env.NEXT_PUBLIC_STRIPE_PRO_PRICE_ID || 'price_pro_monthly')
+        : (process.env.NEXT_PUBLIC_STRIPE_CREDIT_PRICE_ID || 'price_credit_pack');
+
+      const res = await fetch(`${backendUrl}/payments/create-checkout-session`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ priceId, mode }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.url) {
+          window.location.href = data.url;
+        }
+      }
+    } catch (err) {
+      console.error('Checkout failed:', err);
+    }
+  };
+
   if (!isOwnProfile && loadingProfile) {
     return (
       <div className="w-full max-w-[600px] mx-auto animate-fade-in">
@@ -194,7 +274,6 @@ export default function ProfileTab({ viewUserId, onBack, onViewUser }: ProfileTa
       {/* Profile Header */}
       <div className="px-4 py-6">
         <div className="flex items-start gap-5">
-          {/* Avatar */}
           <div className="w-20 h-20 rounded-full bg-alu-surface flex items-center justify-center shrink-0 overflow-hidden">
             {isOwnProfile ? (
               user?.imageUrl ? (
@@ -210,7 +289,6 @@ export default function ProfileTab({ viewUserId, onBack, onViewUser }: ProfileTa
               )
             )}
           </div>
-          {/* Stats */}
           <div className="flex-1">
             <div className="flex items-center gap-3 mb-2">
               <h2 className="text-lg font-bold text-alu-text">
@@ -233,11 +311,15 @@ export default function ProfileTab({ viewUserId, onBack, onViewUser }: ProfileTa
                 <span className="text-[11px] text-alu-text-tertiary">Posts</span>
               </div>
               <div className="text-center">
-                <span className="text-base font-bold text-alu-text block">0</span>
+                <span className="text-base font-bold text-alu-text block">
+                  {isOwnProfile ? ownFollowersCount : followersCount}
+                </span>
                 <span className="text-[11px] text-alu-text-tertiary">Followers</span>
               </div>
               <div className="text-center">
-                <span className="text-base font-bold text-alu-text block">0</span>
+                <span className="text-base font-bold text-alu-text block">
+                  {isOwnProfile ? ownFollowingCount : followingCount}
+                </span>
                 <span className="text-[11px] text-alu-text-tertiary">Following</span>
               </div>
             </div>
@@ -267,11 +349,15 @@ export default function ProfileTab({ viewUserId, onBack, onViewUser }: ProfileTa
           ) : (
             <>
               <button
-                className="flex-1 py-2 rounded-lg text-sm font-semibold text-white opacity-60 cursor-not-allowed"
-                style={{ background: 'linear-gradient(135deg, var(--alu-primary), var(--alu-primary-light))' }}
-                disabled
+                onClick={handleFollow}
+                className={`flex-1 py-2 rounded-lg text-sm font-semibold transition-colors ${
+                  isFollowing
+                    ? 'bg-alu-surface text-alu-text hover:bg-alu-border'
+                    : 'text-white'
+                }`}
+                style={!isFollowing ? { background: 'linear-gradient(135deg, var(--alu-primary), var(--alu-primary-light))' } : undefined}
               >
-                Follow (Coming Soon)
+                {isFollowing ? 'Following' : 'Follow'}
               </button>
               <button
                 onClick={handleShareProfile}
@@ -287,6 +373,15 @@ export default function ProfileTab({ viewUserId, onBack, onViewUser }: ProfileTa
       {/* Settings dropdown (own profile only) */}
       {isOwnProfile && showSettings && (
         <div className="mx-4 mb-4 p-2 bg-alu-surface rounded-xl animate-fade-in">
+          <button
+            onClick={() => { setShowUpgradeModal(true); setShowSettings(false); }}
+            className="w-full text-left px-3 py-2.5 text-sm text-alu-text hover:bg-alu-hover rounded-lg transition-colors flex items-center gap-2.5"
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+            </svg>
+            Upgrade to Pro
+          </button>
           <button
             onClick={() => { setShowPrivacy(true); setShowSettings(false); }}
             className="w-full text-left px-3 py-2.5 text-sm text-alu-text hover:bg-alu-hover rounded-lg transition-colors flex items-center gap-2.5"
@@ -311,13 +406,55 @@ export default function ProfileTab({ viewUserId, onBack, onViewUser }: ProfileTa
         </div>
       )}
 
+      {/* Upgrade Modal */}
+      {showUpgradeModal && (
+        <div className="fixed inset-0 z-[100] bg-black/60 flex items-center justify-center p-4" onClick={() => setShowUpgradeModal(false)}>
+          <div className="bg-white rounded-2xl p-6 max-w-[400px] w-full" onClick={e => e.stopPropagation()}>
+            <h3 className="text-lg font-bold text-alu-text text-center mb-1">Upgrade Your Plan</h3>
+            <p className="text-sm text-alu-text-secondary text-center mb-5">Get more out of Alu</p>
+
+            <div className="flex flex-col gap-3">
+              <button
+                onClick={() => handleUpgrade('subscription')}
+                className="w-full py-3 rounded-xl text-sm font-semibold text-white"
+                style={{ background: 'linear-gradient(135deg, var(--alu-primary), var(--alu-primary-light))' }}
+              >
+                Pro Monthly — $10/mo
+                <span className="block text-xs font-normal opacity-80 mt-0.5">10x daily limits for everything</span>
+              </button>
+              <button
+                onClick={() => handleUpgrade('payment')}
+                className="w-full py-3 rounded-xl text-sm font-semibold bg-alu-surface text-alu-text hover:bg-alu-border transition-colors"
+              >
+                Credit Pack — $10
+                <span className="block text-xs font-normal text-alu-text-secondary mt-0.5">+50 images, +20 shorts, +10 videos</span>
+              </button>
+            </div>
+
+            <button
+              onClick={() => setShowUpgradeModal(false)}
+              className="w-full mt-3 py-2 text-sm text-alu-text-tertiary hover:text-alu-text transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Overlays (own profile only) */}
       {isOwnProfile && showPrivacy && <PrivacyPolicy onBack={() => setShowPrivacy(false)} />}
       {isOwnProfile && showTerms && <TermsConditions onBack={() => setShowTerms(false)} />}
       {isOwnProfile && showEditProfile && <EditProfile onBack={() => setShowEditProfile(false)} />}
 
       {/* Post expand modal */}
-      {selectedPost && <PostModal post={selectedPost} onClose={() => setSelectedPost(null)} onViewUser={onViewUser} />}
+      {selectedPost && (
+        <PostModal
+          post={selectedPost}
+          onClose={() => setSelectedPost(null)}
+          onViewUser={onViewUser}
+          onDeleted={handlePostDeleted}
+        />
+      )}
 
       {/* Content Tabs */}
       <div className="border-b border-alu-border">
@@ -360,7 +497,7 @@ export default function ProfileTab({ viewUserId, onBack, onViewUser }: ProfileTa
           currentContent.map((post) => (
             <div
               key={post._id}
-              className="aspect-square relative overflow-hidden bg-alu-surface cursor-pointer"
+              className="aspect-square relative overflow-hidden bg-alu-surface cursor-pointer group"
               onClick={() => setSelectedPost(post)}
             >
               <MediaItem post={post} />

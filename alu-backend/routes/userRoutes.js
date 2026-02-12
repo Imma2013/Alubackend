@@ -1,6 +1,6 @@
 const express = require('express');
 const clerkAuth = require('../middleware/clerkAuth');
-const { User, Post } = require('../config/db');
+const { User, Post, Notification } = require('../config/db');
 
 const router = express.Router();
 
@@ -32,7 +32,7 @@ router.get('/search', async (req, res) => {
 
 /**
  * GET /users/:userId
- * Get a user's public profile (display info + post counts)
+ * Get a user's public profile (display info + post counts + follower counts)
  */
 router.get('/:userId', async (req, res) => {
     try {
@@ -40,7 +40,7 @@ router.get('/:userId', async (req, res) => {
 
         const user = await User.findOne(
             { userId },
-            { userId: 1, displayName: 1, avatarUrl: 1, bio: 1, isPro: 1, _id: 0 }
+            { userId: 1, displayName: 1, avatarUrl: 1, bio: 1, isPro: 1, followers: 1, following: 1, _id: 0 }
         );
 
         if (!user) {
@@ -60,11 +60,87 @@ router.get('/:userId', async (req, res) => {
             avatarUrl: user.avatarUrl,
             bio: user.bio,
             isPro: user.isPro,
+            followersCount: user.followers?.length || 0,
+            followingCount: user.following?.length || 0,
+            followers: user.followers || [],
+            following: user.following || [],
             counts: { posts, shorts, videos },
         });
     } catch (error) {
         console.error('User profile error:', error);
         res.status(500).json({ error: 'Failed to load profile' });
+    }
+});
+
+/**
+ * POST /users/:userId/follow
+ * Follow a user. Requires auth.
+ */
+router.post('/:userId/follow', clerkAuth, async (req, res) => {
+    try {
+        const myUserId = req.auth.sub;
+        const targetUserId = req.params.userId;
+        const { displayName, avatarUrl } = req.body;
+
+        if (myUserId === targetUserId) {
+            return res.status(400).json({ error: 'Cannot follow yourself' });
+        }
+
+        // Add target to my following list
+        await User.findOneAndUpdate(
+            { userId: myUserId },
+            { $addToSet: { following: targetUserId } },
+            { upsert: true }
+        );
+
+        // Add me to target's followers list
+        await User.findOneAndUpdate(
+            { userId: targetUserId },
+            { $addToSet: { followers: myUserId } },
+            { upsert: true }
+        );
+
+        // Create notification for the target user
+        await Notification.create({
+            userId: targetUserId,
+            type: 'follow',
+            fromUserId: myUserId,
+            fromDisplayName: displayName || '',
+            fromAvatarUrl: avatarUrl || '',
+        });
+
+        res.json({ followed: true });
+    } catch (error) {
+        console.error('Follow error:', error);
+        res.status(500).json({ error: 'Failed to follow user' });
+    }
+});
+
+/**
+ * POST /users/:userId/unfollow
+ * Unfollow a user. Requires auth.
+ */
+router.post('/:userId/unfollow', clerkAuth, async (req, res) => {
+    try {
+        const myUserId = req.auth.sub;
+        const targetUserId = req.params.userId;
+
+        // Remove target from my following list
+        await User.findOneAndUpdate(
+            { userId: myUserId },
+            { $pull: { following: targetUserId } }
+        );
+
+        // Remove me from target's followers list
+        await User.findOneAndUpdate(
+            { userId: targetUserId },
+            { $pull: { followers: myUserId } }
+        );
+
+        res.json({ followed: false });
+    } catch (error) {
+        console.error('Unfollow error:', error);
+        res.status(500).json({ error: 'Failed to unfollow user' });
     }
 });
 

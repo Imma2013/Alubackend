@@ -12,7 +12,12 @@ const UserSchema = new mongoose.Schema({
   lastResetDate: { type: Date, default: Date.now },
   isPro: { type: Boolean, default: false },
   subscriptionId: { type: String },
-  stripeCustomerId: { type: String }
+  stripeCustomerId: { type: String },
+  bonusImages: { type: Number, default: 0 },
+  bonusShorts: { type: Number, default: 0 },
+  bonusLongVids: { type: Number, default: 0 },
+  followers: [{ type: String }],
+  following: [{ type: String }],
 });
 
 // Post Schema - Tracks content
@@ -50,7 +55,7 @@ const CommentSchema = new mongoose.Schema({
 // Notification Schema
 const NotificationSchema = new mongoose.Schema({
   userId: { type: String, required: true, index: true }, // who receives this
-  type: { type: String, enum: ['like', 'comment'], required: true },
+  type: { type: String, enum: ['like', 'comment', 'follow'], required: true },
   fromUserId: { type: String, required: true },
   fromDisplayName: { type: String, default: '' },
   fromAvatarUrl: { type: String, default: '' },

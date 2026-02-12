@@ -32,18 +32,22 @@ alu-frontend/   (Next.js + Tailwind) — ON VERCEL, DEPLOYED (alu-teal-pi.vercel
 - PostHog (analytics)
 
 ### AI Services
-- NanoBanana Pro / `gemini-3-pro-image-preview` (images — via Gemini API generateContent)
+- NanoBanana Flash / `gemini-2.0-flash-preview-image-generation` (images — via Gemini API generateContent, switched from Pro for speed)
 - Veo 3.1 / `veo-3.1-generate-preview` → fallback Veo 2.0 / `veo-2.0-generate-001` (shorts — via Gemini API generateVideos)
 - Sora 2 via piapi.ai (long video clips — storyboard mode, falls back to Veo 3.1)
 - Gemini Flash 2.0 as orchestrator/prompt cleaner + scene splitter (conductor.js)
 - FFmpeg via ffmpeg-static (video stitching/concatenation)
 
 ## Daily Limits (Freemium)
-| Content Type | Free Tier |
-|--------------|-----------|
-| Images | 3/day |
-| Shorts | 2/day |
-| Videos | 1/day |
+| Content Type | Free Tier | Pro (10x) |
+|--------------|-----------|-----------|
+| Images | 3/day | 30/day |
+| Shorts | 2/day | 20/day |
+| Videos | 1/day | 10/day |
+
+### Monetization
+- **Pro subscription:** $10/month via Stripe — 10x daily limits
+- **Credit pack (one-time):** $10 — +50 images, +20 shorts, +10 videos (bonus credits, don't reset daily)
 
 ---
 
@@ -88,19 +92,22 @@ alu-frontend/   (Next.js + Tailwind) — ON VERCEL, DEPLOYED (alu-teal-pi.vercel
 - [x] Notifications uses SVG icons (Heart, Profile, Comment, Share) instead of emoji
 
 ### Phase 2 — STILL TODO (Wire up real data):
-- [ ] Connect HomeTab Feed to real Dexie data (Feed.tsx + db.ts exist, need integration)
-- [ ] Pass showAI/showNormal from page.tsx down to feed tabs to actually filter content
-- [ ] Connect search to actually search content
-- [ ] Hook up Clerk UserButton to Profile tab (currently in sidebar only)
-- [ ] Replace mock data with real Dexie queries in all tabs
-- [ ] Add real image/video display using MediaItem.tsx + OPFS (code exists)
+- [x] Connect HomeTab Feed to real Dexie data (done Session 4)
+- [x] Pass showAI/showNormal from page.tsx down to feed tabs (done Session 4)
+- [x] Connect search to actually search content (done Session 8)
+- [x] Hook up Clerk UserButton to Profile tab (done Session 6)
+- [x] Replace mock data with real Dexie queries in all tabs (done Session 5)
+- [x] Add real image/video display using MediaItem.tsx + OPFS (done Session 4)
+- [x] Wire up like/comment/share/bookmark to backend (done Session 8 + Session 10 fixes)
 - [ ] Implement story upload/display
-- [ ] Wire up like/comment/share/bookmark to backend
 - [ ] Messages: Real-time messaging (not implemented yet)
 - [ ] Image cropping on upload (keep it simple like Instagram)
 
 ### Phase 3: Polish & Ship
-- [ ] Fix Stripe webhook (line 71 in alu-backend/routes/paymentRoutes.js needs uncommenting)
+- [x] Fix Stripe webhook — complete with subscription + one-time credit pack support (Session 10)
+- [x] Follow/unfollow system — backend + frontend wired (Session 10)
+- [x] Delete own posts — PostModal + API (Session 10)
+- [x] Instagram PostModal redesign — side-by-side with inline comments (Session 10)
 - [ ] Add referral system
 - [ ] PWA manifest + service worker
 - [ ] Test end-to-end
@@ -137,6 +144,8 @@ alu-frontend/src/app/
         └── NotificationsTab.tsx — Empty state (backend ready, frontend pending)
 ├── post/[id]/page.tsx       — Share link page (media + comments + like/share)
 ├── watch/[id]/page.tsx      — YouTube-style watch page (video player + comments + related)
+├── success/page.tsx         — Stripe payment success page (auto-redirect)
+├── global-error.tsx         — Custom global error boundary (fixes Next.js 16 build)
 ```
 
 ## Design System
@@ -222,7 +231,8 @@ NEXT_PUBLIC_BACKEND_URL=<render backend url>
 | Tier | Price | Limits |
 |------|-------|--------|
 | Free | $0 | 3 img / 2 shorts / 1 vid per day |
-| Pro | $5-10/mo | 10x or unlimited |
+| Pro | $10/mo (Stripe subscription) | 10x daily limits (30 img / 20 shorts / 10 vids) |
+| Credit Pack | $10 one-time (Stripe) | +50 images, +20 shorts, +10 videos (bonus, don't reset daily) |
 
 ### Why Local-First Saves Money
 - Users store media on THEIR device (OPFS)
@@ -495,10 +505,57 @@ Merged uncommitted work from another Claude session that built core social featu
 
 **Build:** Frontend passes `npm run build` clean — routes: `/`, `/post/[id]`, `/watch/[id]`
 
+### 2026-02-11: Fix Everything & Ship — Session 10 (Claude Opus)
+
+**Backend Fixes:**
+- **Image model switched:** `gemini-3-pro-image-preview` (Pro, slow) → `gemini-2.0-flash-preview-image-generation` (Flash, fast). Label: "NanoBanana Flash"
+- **DELETE post endpoint:** `DELETE /posts/:id` — verifies ownership, deletes post + comments + notifications + Cloudinary asset. Full cleanup.
+- **Stripe payments completed:** Both subscription ($10/mo Pro) and one-time ($10 credit pack) modes. Webhook handles `checkout.session.completed` (sets isPro or adds bonus credits) and `customer.subscription.deleted` (downgrades). Credit pack: +50 images, +20 shorts, +10 videos.
+- **Fixed /usage 500 error:** Changed from `findOne` (returns null, crashes) to `findOneAndUpdate` with `upsert: true`. Returns bonus credits + Pro-scaled limits.
+- **Follow/unfollow endpoints:** `POST /users/:userId/follow` and `/unfollow` — updates both users' followers/following arrays, creates notification on follow.
+- **User profile endpoint updated:** Returns real `followersCount`, `followingCount`, `followers[]`, `following[]`.
+- **Schema updates (db.js):** Added `bonusImages`, `bonusShorts`, `bonusLongVids` (Number, default 0), `followers` [String], `following` [String] to UserSchema. Added `'follow'` to Notification type enum.
+- **Daily limit system upgraded:** Pro users get 10x limits. Bonus credits stack on top. Formula: `baseLimit * proMultiplier + bonusCredits`.
+
+**Frontend Fixes:**
+- **Caption moved below media:** YouTube/Instagram-style — new order: Header → Media → Actions → Caption (was above media).
+- **Instagram PostModal redesign:** Side-by-side layout on desktop (60% media left, 40% info right). Mobile: stacked. Inline comments (fetched on open). Comment input at bottom of right panel. Caption shown as first "comment" (Instagram-style).
+- **Like button fixed:** `likedByMe` Set now initialized from `post.likedBy` array on posts load (was empty, so first click always showed "like" even if already liked). Like count initialized from `post.likes`.
+- **Delete own posts:** Trash icon in PostModal header (only for post owner). Confirmation dialog. Deletes via `DELETE /posts/:id`, removes from Dexie, closes modal, calls `onDeleted` callback to refresh parent.
+- **Follow system:** Real Follow/Unfollow button on other user profiles. Shows real follower/following counts from API. Button state derived from `profile.followers.includes(user.id)`.
+- **Upgrade to Pro:** Settings dropdown → "Upgrade to Pro" option. Modal with two choices: Pro Monthly ($10/mo) or Credit Pack ($10 one-time). Redirects to Stripe Checkout.
+- **Stripe success page:** `/success` — shows checkmark + "Payment Successful!" + 3-second countdown redirect to `/`.
+- **`likedBy` added to Post interface** in db.ts for type safety.
+- **Custom global-error.tsx** — fixes Next.js 16 prerender error during build.
+
+**New Files:**
+- `alu-frontend/src/app/success/page.tsx` — Stripe payment success page
+- `alu-frontend/src/app/global-error.tsx` — Custom error boundary (fixes build)
+
+**Modified Files (Backend):**
+- `alu-backend/services/conductor.js` — Flash model, Pro multiplier + bonus credits in limit check
+- `alu-backend/routes/postRoutes.js` — DELETE post endpoint with Cloudinary cleanup
+- `alu-backend/routes/paymentRoutes.js` — Complete rewrite: both payment modes, full webhook
+- `alu-backend/routes/userRoutes.js` — Follow/unfollow endpoints, real follower counts
+- `alu-backend/config/db.js` — Bonus credits, followers/following, follow notification type
+- `alu-backend/server.js` — Fixed /usage upsert, bonus credits in response
+
+**Modified Files (Frontend):**
+- `alu-frontend/src/app/components/tabs/HomeTab.tsx` — Caption below, like state init
+- `alu-frontend/src/app/components/PostModal.tsx` — Instagram redesign, inline comments, delete, like fix
+- `alu-frontend/src/app/components/tabs/ProfileTab.tsx` — Follow, upgrade modal, delete support
+- `alu-frontend/src/app/db.ts` — likedBy on Post interface
+
+**Build:** Frontend passes `npm run build` clean — routes: `/`, `/_not-found`, `/post/[id]`, `/success`, `/watch/[id]`
+
+**ENV VARS NEEDED:**
+- Vercel: `NEXT_PUBLIC_STRIPE_PRO_PRICE_ID`, `NEXT_PUBLIC_STRIPE_CREDIT_PRICE_ID` (create Price objects in Stripe Dashboard first)
+- Render: `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `FRONTEND_URL`
+
 ### NEXT SESSION PRIORITIES:
-1. **Follow/Friend system**: Follow schema in MongoDB, follow/unfollow endpoints, Follow button on profiles, real follower/following counts
+1. **Real NotificationsTab**: Wire to `/notifications` endpoint, show like/comment/follow events with avatars
 2. **Real-time messaging**: Chat interface with WebSocket/SSE, text + image in chats
-3. **Real NotificationsTab**: Wire to `/notifications` endpoint, show like/comment events with avatars
-4. **Stripe Pro upgrade**: $10/month, wire webhook to actually upgrade user isPro status
-5. **Stories**: Upload photo stories (from camera roll), plus button on profile pic, swipe through
-6. **PWA manifest + service worker**
+3. **Stories**: Upload photo stories (from camera roll), plus button on profile pic, swipe through
+4. **PWA manifest + service worker**
+5. **@ mention system**: Tag users in comments/captions
+6. **Image cropping on upload** (Instagram-style)

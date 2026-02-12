@@ -104,7 +104,11 @@ async function generateContent(userId, prompt, type, isLongVideo = false, visibi
     limitKey = isLongVideo ? 'dailyLongVids' : 'dailyShorts';
   }
 
-  if (user[limitKey] >= LIMITS[limitKey === 'dailyLongVids' ? 'long' : (limitKey === 'dailyShorts' ? 'short' : 'image')]) {
+  const limitType = limitKey === 'dailyLongVids' ? 'long' : (limitKey === 'dailyShorts' ? 'short' : 'image');
+  const baseLimit = LIMITS[limitType] * (user.isPro ? 10 : 1);
+  const bonusKey = limitKey === 'dailyLongVids' ? 'bonusLongVids' : (limitKey === 'dailyShorts' ? 'bonusShorts' : 'bonusImages');
+  const bonus = user[bonusKey] || 0;
+  if (user[limitKey] >= baseLimit + bonus) {
     throw new Error('429: Daily limit reached for this content type.');
   }
 
@@ -118,9 +122,9 @@ async function generateContent(userId, prompt, type, isLongVideo = false, visibi
 
   try {
     if (type === 'image') {
-      // --- IMAGE: NanoBanana Pro (Gemini 3 Pro Image) ---
-      modelName = 'gemini-3-pro-image-preview';
-      provider = 'NanoBanana Pro';
+      // --- IMAGE: NanoBanana Flash (Gemini 2.0 Flash Image Gen) ---
+      modelName = 'gemini-2.0-flash-preview-image-generation';
+      provider = 'NanoBanana Flash';
       console.log(`Dispatching to ${provider}...`);
 
       const imageResponse = await ai.models.generateContent({
@@ -136,7 +140,7 @@ async function generateContent(userId, prompt, type, isLongVideo = false, visibi
       const imagePart = parts.find(p => p.inlineData?.mimeType?.startsWith('image/'));
 
       if (!imagePart) {
-        throw new Error('NanoBanana Pro returned no image data.');
+        throw new Error('NanoBanana Flash returned no image data.');
       }
 
       const base64Image = imagePart.inlineData.data;

@@ -96,6 +96,21 @@ export default function HomeTab({ showAI, showNormal, searchQuery = '', onViewUs
 
   const isSearching = !!searchQuery.trim();
 
+  // Initialize likedByMe from post data
+  useEffect(() => {
+    if (!allPosts || !user) return;
+    const myLikes = new Set<string>();
+    const counts: Record<string, number> = {};
+    for (const post of allPosts) {
+      if (post.likedBy?.includes(user.id)) {
+        myLikes.add(post._id);
+      }
+      counts[post._id] = post.likes ?? 0;
+    }
+    setLikedByMe(myLikes);
+    setLikedPosts(counts);
+  }, [allPosts, user]);
+
   // Sync on mount + every 60s
   useEffect(() => {
     const runSync = async () => {
@@ -282,13 +297,6 @@ export default function HomeTab({ showAI, showNormal, searchQuery = '', onViewUs
                 </button>
               </div>
 
-              {/* Caption */}
-              {post.safePrompt && post.safePrompt !== 'User upload' && (
-                <div className="px-4 pb-2">
-                  <p className="text-sm leading-relaxed text-alu-text">{post.safePrompt}</p>
-                </div>
-              )}
-
               {/* Post Media — click to expand */}
               <div className="w-full aspect-[4/3] bg-alu-surface relative overflow-hidden cursor-pointer" onClick={() => setSelectedPost(post)}>
                 <MediaItem post={post} />
@@ -328,6 +336,13 @@ export default function HomeTab({ showAI, showNormal, searchQuery = '', onViewUs
                   <BookmarkIcon size={20} />
                 </button>
               </div>
+
+              {/* Caption — below media like YouTube/Instagram */}
+              {post.safePrompt && post.safePrompt !== 'User upload' && (
+                <div className="px-4 pb-3">
+                  <p className="text-sm leading-relaxed text-alu-text">{post.safePrompt}</p>
+                </div>
+              )}
             </article>
           );
         })}

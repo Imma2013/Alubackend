@@ -14,6 +14,7 @@ export interface Post {
   synced?: number; // 0 = not synced, 1 = synced
   thumbnailUrl?: string;
   likes?: number;
+  likedBy?: string[];
   originalPrompt?: string;
   caption?: string;
   visibility?: 'everyone' | 'followers' | 'private';

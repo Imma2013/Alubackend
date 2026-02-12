@@ -130,4 +130,40 @@ router.delete('/:postId/comments/:commentId', clerkAuth, async (req, res) => {
     }
 });
 
+// ─── DELETE a post (only by author) ───
+router.delete('/:id', clerkAuth, async (req, res) => {
+    try {
+        const userId = req.auth.sub;
+        const post = await Post.findById(req.params.id);
+        if (!post) return res.status(404).json({ error: 'Post not found' });
+        if (post.userId !== userId) return res.status(403).json({ error: 'Not your post' });
+
+        // Delete associated comments and notifications
+        await Comment.deleteMany({ postId: post._id });
+        await Notification.deleteMany({ postId: post._id });
+
+        // Delete from Cloudinary if it's a Cloudinary URL
+        if (post.contentUrl && post.contentUrl.includes('cloudinary.com')) {
+            try {
+                const { v2: cloudinary } = require('cloudinary');
+                // Extract public_id from URL
+                const urlParts = post.contentUrl.split('/');
+                const folderAndFile = urlParts.slice(-2).join('/');
+                const publicId = folderAndFile.replace(/\.[^.]+$/, '');
+                await cloudinary.uploader.destroy(publicId, {
+                    resource_type: post.mediaType === 'video' ? 'video' : 'image',
+                });
+            } catch (cloudErr) {
+                console.error('Cloudinary delete failed (non-fatal):', cloudErr.message);
+            }
+        }
+
+        await post.deleteOne();
+        res.json({ deleted: true });
+    } catch (err) {
+        console.error('Delete post error:', err);
+        res.status(500).json({ error: 'Failed to delete post' });
+    }
+});
+
 module.exports = router;
