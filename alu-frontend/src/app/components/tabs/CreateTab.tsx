@@ -445,7 +445,7 @@ export default function CreateTab() {
         <div className="mb-6">
           <label className="text-xs font-semibold text-alu-text mb-2 block">Video Quality</label>
           <div className="flex gap-2">
-            {['360p', '720p', '1080p', selectedType === 'video' && '4k'].filter(Boolean).map((quality) => (
+            {(['360p', '720p', '1080p', selectedType === 'video' && '4k'].filter(Boolean) as string[]).map((quality) => (
               <button
                 key={quality}
                 onClick={() => setVideoQuality(quality as typeof videoQuality)}
