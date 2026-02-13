@@ -22,21 +22,29 @@ const upload = multer({
 /**
  * POST /upload
  * Accepts multipart/form-data with:
- *   - file: the image or video file
+ *   - file or files: single file or multiple image files (up to 5 for carousel)
  *   - mediaType: 'image' | 'video'
  *   - caption: optional text caption
  *   - videoType: 'short' | 'long' (optional, for videos)
  */
-router.post('/', clerkAuth, upload.single('file'), async (req, res) => {
+router.post('/', clerkAuth, upload.any(), async (req, res) => {
   const userId = req.auth.sub;
   const { caption, mediaType, videoType, visibility, displayName, avatarUrl, is_ai, quality } = req.body;
 
-  if (!req.file) {
-    return res.status(400).json({ error: 'No file uploaded' });
+  // Support both single 'file' and multiple 'files'
+  const files = req.files || [];
+
+  if (files.length === 0) {
+    return res.status(400).json({ error: 'No file(s) uploaded' });
   }
 
   if (!mediaType || !['image', 'video'].includes(mediaType)) {
     return res.status(400).json({ error: 'mediaType must be "image" or "video"' });
+  }
+
+  // Limit multi-image uploads to 5 images max
+  if (files.length > 5 && mediaType === 'image') {
+    return res.status(400).json({ error: 'Maximum 5 images allowed per post' });
   }
 
   try {
@@ -49,45 +57,50 @@ router.post('/', clerkAuth, upload.single('file'), async (req, res) => {
       );
     }
 
-    // Upload to Cloudinary via stream
-    const cloudResult = await new Promise((resolve, reject) => {
-      const resourceType = mediaType === 'image' ? 'image' : 'video';
-      const options = {
-        resource_type: resourceType,
-        folder: 'alu-uploads',
-        public_id: `${userId}_${Date.now()}`,
-      };
-
-      // For videos, apply quality and generate thumbnail
-      if (resourceType === 'video') {
-        // Map quality to Cloudinary height parameters
-        const qualityMap = {
-          '360p': 360,
-          '720p': 720,
-          '1080p': 1080,
-          '4k': 2160
+    // Upload all files to Cloudinary
+    const uploadPromises = files.map((file, index) => {
+      return new Promise((resolve, reject) => {
+        const resourceType = mediaType === 'image' ? 'image' : 'video';
+        const options = {
+          resource_type: resourceType,
+          folder: 'alu-uploads',
+          public_id: `${userId}_${Date.now()}_${index}`,
         };
-        const height = qualityMap[quality] || 360;
 
-        options.eager = [
-          { format: 'jpg', width: 400, height: 400, crop: 'thumb', gravity: 'auto' },
-          { format: 'mp4', height, quality: 'auto', crop: 'limit' }
-        ];
-        options.eager_async = false;
-      }
+        // For videos, apply quality and generate thumbnail
+        if (resourceType === 'video') {
+          const qualityMap = {
+            '360p': 360,
+            '720p': 720,
+            '1080p': 1080,
+            '4k': 2160
+          };
+          const height = qualityMap[quality] || 360;
 
-      const uploadStream = cloudinary.uploader.upload_stream(options, (error, result) => {
-        if (error) reject(error);
-        else resolve(result);
+          options.eager = [
+            { format: 'jpg', width: 400, height: 400, crop: 'thumb', gravity: 'auto' },
+            { format: 'mp4', height, quality: 'auto', crop: 'limit' }
+          ];
+          options.eager_async = false;
+        }
+
+        const uploadStream = cloudinary.uploader.upload_stream(options, (error, result) => {
+          if (error) reject(error);
+          else resolve(result);
+        });
+
+        uploadStream.end(file.buffer);
       });
-
-      uploadStream.end(req.file.buffer);
     });
+
+    const cloudResults = await Promise.all(uploadPromises);
+    const imageUrls = cloudResults.map(result => result.secure_url);
 
     // Create Post in MongoDB
     const post = await Post.create({
       userId,
-      contentUrl: cloudResult.secure_url,
+      contentUrl: imageUrls[0], // First image/video as primary
+      images: imageUrls.length > 1 ? imageUrls : undefined, // Store all URLs if multiple
       caption: caption || '',
       safePrompt: caption || 'User upload',
       originalPrompt: caption || '',
@@ -95,7 +108,7 @@ router.post('/', clerkAuth, upload.single('file'), async (req, res) => {
       mediaType,
       videoType: mediaType === 'video' ? (videoType || 'short') : undefined,
       isLongForm: videoType === 'long',
-      thumbnailUrl: cloudResult.eager?.[0]?.secure_url || null,
+      thumbnailUrl: cloudResults[0].eager?.[0]?.secure_url || null,
       visibility: visibility || 'everyone',
       displayName: displayName || '',
       avatarUrl: avatarUrl || '',

@@ -8,7 +8,7 @@ import { pullChanges, pushChanges } from '../../syncService';
 import MediaItem from '../MediaItem';
 import { HeartIcon, CommentIcon, ShareIcon, BookmarkIcon, SearchIcon } from '../icons';
 import PostModal from '../PostModal';
-import CommentsPanel from '../CommentsPanel';
+import CommentsDrawer from '../CommentsDrawer';
 
 interface UserResult {
   userId: string;
@@ -240,7 +240,7 @@ export default function HomeTab({ showAI, showNormal, searchQuery = '', onViewUs
   };
 
   return (
-    <div className="w-full max-w-[600px] mx-auto animate-fade-in">
+    <div className="w-full max-w-full md:max-w-[950px] mx-auto animate-fade-in">
       {/* Sync indicator */}
       {isSyncing && (
         <div className="text-center py-2">
@@ -338,9 +338,6 @@ export default function HomeTab({ showAI, showNormal, searchQuery = '', onViewUs
                   </button>
                   <span className="text-xs text-alu-text-tertiary block">{timeAgo(post.timestamp)}</span>
                 </div>
-                <button className="text-alu-text-tertiary hover:text-alu-text transition-colors p-1">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2" /><circle cx="12" cy="12" r="2" /><circle cx="12" cy="19" r="2" /></svg>
-                </button>
               </div>
 
               {/* Post Media — click to expand */}
@@ -400,8 +397,8 @@ export default function HomeTab({ showAI, showNormal, searchQuery = '', onViewUs
       {/* Post expand modal */}
       {selectedPost && <PostModal post={selectedPost} onClose={() => setSelectedPost(null)} onViewUser={onViewUser} />}
 
-      {/* Comments panel */}
-      <CommentsPanel
+      {/* Comments drawer */}
+      <CommentsDrawer
         postId={commentsPostId || ''}
         isOpen={!!commentsPostId}
         onClose={() => setCommentsPostId(null)}

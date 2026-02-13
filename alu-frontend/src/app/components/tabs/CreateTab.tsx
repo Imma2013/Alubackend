@@ -55,10 +55,16 @@ export default function CreateTab() {
     fetchUsage();
   }, [success]); // re-fetch after successful generation
 
-  const types: { key: ContentType; label: string; desc: string; icon: React.ReactNode }[] = [
-    { key: 'image', label: 'Image', desc: 'AI generated', icon: <ImageIcon size={24} /> },
-    { key: 'short', label: 'Short', desc: 'Pro only', icon: <ZapIcon size={24} /> },
-  ];
+  // Dynamic types based on mode
+  const types: { key: ContentType; label: string; desc: string; icon: React.ReactNode }[] = mode === 'ai'
+    ? [
+        { key: 'image', label: 'Image', desc: 'AI generated', icon: <ImageIcon size={24} /> },
+        { key: 'short', label: 'Shorts', desc: 'Pro only', icon: <ZapIcon size={24} /> },
+      ]
+    : [
+        { key: 'image', label: 'Image', desc: 'Manual upload', icon: <ImageIcon size={24} /> },
+        { key: 'short', label: 'Video', desc: 'Short format', icon: <FilmIcon size={24} /> },
+      ];
 
   const privacyOptions = [
     { value: 'everyone', label: 'Everyone', icon: <GlobeIcon size={16} /> },
@@ -310,7 +316,7 @@ export default function CreateTab() {
       <h2 className="text-xl font-bold text-alu-text mb-6">Create</h2>
 
       {/* Content Type Selector */}
-      <div className="grid grid-cols-3 gap-3 mb-6">
+      <div className="grid grid-cols-2 gap-3 mb-6">
         {types.map((t) => (
           <button
             key={t.key}
@@ -367,7 +373,7 @@ export default function CreateTab() {
                 <UploadIcon size={40} />
               </div>
               <p className="text-sm font-semibold text-alu-text mb-1">
-                Tap to upload {selectedType === 'image' ? 'a photo' : selectedType === 'short' ? 'a short video' : 'a video'}
+                Tap to upload {selectedType === 'image' ? 'a photo' : 'a video'}
               </p>
               <p className="text-xs text-alu-text-tertiary">
                 {selectedType === 'image' ? 'JPG, PNG, GIF, WebP' : 'MP4, MOV, WebM'} — max 100MB
@@ -393,34 +399,65 @@ export default function CreateTab() {
           )}
         </div>
       ) : (
-        <div className="mb-6">
-          <textarea
-            value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
-            placeholder={
-              selectedType === 'image'
-                ? 'Describe the image you want to create...'
-                : selectedType === 'short'
-                  ? 'Describe your short video concept...'
-                  : 'Describe your video idea...'
-            }
-            className="w-full h-28 p-4 bg-alu-surface rounded-xl text-sm text-alu-text placeholder:text-alu-text-tertiary outline-none resize-none focus:ring-2 focus:ring-[var(--alu-primary-glow)] transition-shadow"
-          />
-          <div className="flex justify-end mt-2">
-            <span className="text-[11px] text-alu-text-tertiary">
-              {usage ? (
+        <>
+          {/* Shorts Counter (AI mode, shorts selected) */}
+          {selectedType === 'short' && usage && (
+            <div className="mb-4 p-4 bg-gradient-to-r from-[var(--alu-primary-glow)] to-[var(--alu-surface)] rounded-xl border border-[var(--alu-primary)]/20">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="flex items-center gap-2 mb-1">
+                    <ZapIcon size={18} className="text-[var(--alu-primary)]" />
+                    <span className="text-sm font-bold text-alu-text">Shorts Remaining</span>
+                  </div>
+                  <p className="text-xs text-alu-text-secondary">
+                    {usage.isPro ? 'Resets monthly' : 'Upgrade to Pro for 5/month'}
+                  </p>
+                </div>
+                <div className="text-right">
+                  <div className="text-2xl font-bold text-[var(--alu-primary)]">
+                    {Math.max(0, usage.limits.short - usage.monthlyShorts)}
+                  </div>
+                  <div className="text-xs text-alu-text-tertiary">
+                    of {usage.limits.short}
+                  </div>
+                </div>
+              </div>
+              {!usage.isPro && (
+                <button
+                  onClick={() => window.open('/pricing', '_blank')}
+                  className="mt-3 w-full py-2 rounded-lg text-xs font-semibold text-white bg-gradient-to-r from-[var(--alu-primary)] to-[var(--alu-primary-light)] hover:opacity-90 transition-opacity"
+                >
+                  Upgrade to Pro
+                </button>
+              )}
+            </div>
+          )}
+
+          <div className="mb-6">
+            <textarea
+              value={prompt}
+              onChange={(e) => setPrompt(e.target.value)}
+              placeholder={
                 selectedType === 'image'
-                  ? `${Math.max(0, usage.limits.image - usage.dailyImages)} left today`
-                  : selectedType === 'short'
-                    ? usage.isPro
-                      ? `${Math.max(0, usage.limits.short - usage.monthlyShorts)} left this month`
+                  ? 'Describe the image you want to create...'
+                  : 'Describe your short video concept...'
+              }
+              className="w-full h-28 p-4 bg-alu-surface rounded-xl text-sm text-alu-text placeholder:text-alu-text-tertiary outline-none resize-none focus:ring-2 focus:ring-[var(--alu-primary-glow)] transition-shadow"
+            />
+            <div className="flex justify-end mt-2">
+              <span className="text-[11px] text-alu-text-tertiary">
+                {usage ? (
+                  selectedType === 'image'
+                    ? `${Math.max(0, usage.limits.image - usage.dailyImages)} images left today`
+                    : usage.isPro
+                      ? `${Math.max(0, usage.limits.short - usage.monthlyShorts)} shorts left this month`
                       : '🔒 Pro only'
-                    : 'N/A'
-              ) : 'Loading...'}
-              {' · '}{usage?.isPro ? 'Pro' : 'Free tier'}
-            </span>
+                ) : 'Loading...'}
+                {' · '}{usage?.isPro ? 'Pro' : 'Free tier'}
+              </span>
+            </div>
           </div>
-        </div>
+        </>
       )}
 
       {/* AI Content Label (upload mode only) */}
@@ -518,17 +555,36 @@ export default function CreateTab() {
       {success && <p className="text-sm text-[var(--alu-success)] mb-4">Content {mode === 'ai' ? 'generated' : 'uploaded'} successfully!</p>}
 
       {/* Submit */}
-      <button
-        onClick={mode === 'ai' ? handleAIGenerate : handleUpload}
-        disabled={isLoading || (mode === 'ai' && !prompt.trim()) || (mode === 'upload' && !file)}
-        className="w-full py-3.5 rounded-xl font-bold text-white text-sm transition-all duration-200 hover:opacity-90 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
-        style={{ background: 'linear-gradient(135deg, var(--alu-primary), var(--alu-primary-light))' }}
-      >
-        {isLoading
-          ? (mode === 'ai' ? 'Generating...' : 'Uploading...')
-          : (mode === 'ai' ? 'Generate & Post' : 'Post')
-        }
-      </button>
+      {(() => {
+        const canGenerateShort = !usage || selectedType !== 'short' || mode !== 'ai' || (usage.monthlyShorts < usage.limits.short && usage.isPro);
+        const isDisabled = isLoading || (mode === 'ai' && !prompt.trim()) || (mode === 'upload' && !file) || !canGenerateShort;
+        const tooltipText = !canGenerateShort && selectedType === 'short' && mode === 'ai'
+          ? (usage?.isPro ? 'Monthly shorts limit reached' : 'Upgrade to Pro to generate shorts')
+          : '';
+
+        return (
+          <div className="relative group">
+            <button
+              onClick={mode === 'ai' ? handleAIGenerate : handleUpload}
+              disabled={isDisabled}
+              className="w-full py-3.5 rounded-xl font-bold text-white text-sm transition-all duration-200 hover:opacity-90 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
+              style={{ background: 'linear-gradient(135deg, var(--alu-primary), var(--alu-primary-light))' }}
+              title={tooltipText}
+            >
+              {isLoading
+                ? (mode === 'ai' ? 'Generating...' : 'Uploading...')
+                : (mode === 'ai' ? 'Generate & Post' : 'Post')
+              }
+            </button>
+            {tooltipText && isDisabled && !isLoading && (
+              <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-2 bg-black/90 text-white text-xs rounded-lg whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+                {tooltipText}
+                <div className="absolute top-full left-1/2 -translate-x-1/2 -mt-1 border-4 border-transparent border-t-black/90" />
+              </div>
+            )}
+          </div>
+        );
+      })()}
     </div>
   );
 }

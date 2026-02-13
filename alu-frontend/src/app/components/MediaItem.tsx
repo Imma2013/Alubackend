@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { getFileUrl } from '../fileSystem';
 import { Post } from '../db';
+import ImageCarousel from './ImageCarousel';
 
 export default function MediaItem({ post }: { post: Post }) {
   const [localUrl, setLocalUrl] = useState<string | null>(null);
@@ -41,10 +42,19 @@ export default function MediaItem({ post }: { post: Post }) {
     };
   }, [post.contentUrl]);
 
-  if (!localUrl) {
+  // Check for multi-image carousel
+  const hasMultipleImages = post.images && post.images.length > 1;
+
+  if (!localUrl && !hasMultipleImages) {
     return <div className="w-full h-full bg-[var(--alu-surface)] animate-pulse rounded-lg"></div>;
   }
 
+  // Multi-image carousel
+  if (hasMultipleImages && post.images) {
+    return <ImageCarousel images={post.images} />;
+  }
+
+  // Single image or video
   return (
     <>
       {post.mediaType === 'image' ? (

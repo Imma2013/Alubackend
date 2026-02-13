@@ -37,7 +37,8 @@ const PostSchema = new mongoose.Schema({
   visibility: { type: String, enum: ['everyone', 'followers', 'private'], default: 'everyone' },
   status: { type: String, enum: ['ready', 'pending', 'failed'], default: 'ready' },
   displayName: { type: String, default: '' },
-  avatarUrl: { type: String, default: '' }
+  avatarUrl: { type: String, default: '' },
+  images: [{ type: String }], // Array of image URLs for carousel posts (up to 5 images)
 }, { timestamps: true });
 
 // Comment Schema

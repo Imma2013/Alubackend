@@ -2,8 +2,10 @@
 
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
+import { useAuth, useUser } from '@clerk/nextjs';
 import { db, Post } from '../../db';
 import MediaItem from '../MediaItem';
+import CommentsDrawer from '../CommentsDrawer';
 import { HeartIcon, CommentIcon, ShareIcon, BookmarkIcon, ShortsIcon } from '../icons';
 
 interface ShortsTabProps {
@@ -11,18 +13,32 @@ interface ShortsTabProps {
 }
 
 export default function ShortsTab({ searchQuery = '' }: ShortsTabProps) {
+  const { getToken } = useAuth();
+  const { user } = useUser();
   const [currentIndex, setCurrentIndex] = useState(0);
   const [liked, setLiked] = useState<Set<string>>(new Set());
+  const [saved, setSaved] = useState<Set<string>>(new Set());
   const [swipeOffset, setSwipeOffset] = useState(0);
   const [isSwiping, setIsSwiping] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
+  const [showComments, setShowComments] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
   const videoContainerRef = useRef<HTMLDivElement>(null);
   const touchStartY = useRef(0);
   const touchStartTime = useRef(0);
 
-  // Reset pause state when switching shorts
+  // Detect mobile
+  useEffect(() => {
+    const checkMobile = () => setIsMobile(window.innerWidth < 768);
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
+
+  // Reset pause state and close comments when switching shorts
   useEffect(() => {
     setIsPaused(false);
+    setShowComments(false);
   }, [currentIndex]);
 
   const handleTapVideo = () => {
@@ -61,15 +77,76 @@ export default function ShortsTab({ searchQuery = '' }: ShortsTabProps) {
   const shortsList = shorts;
   const short = shortsList[currentIndex];
 
-  const toggleLike = () => {
+  const toggleLike = async () => {
     if (!short) return;
     const key = short._id;
+    const token = await getToken();
+    if (!token) return;
+
+    // Optimistic update
     setLiked(prev => {
       const next = new Set(prev);
       if (next.has(key)) next.delete(key);
       else next.add(key);
       return next;
     });
+
+    // API call
+    try {
+      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3001';
+      await fetch(`${backendUrl}/posts/${key}/like`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ displayName: user?.fullName || '', avatarUrl: user?.imageUrl || '' }),
+      });
+    } catch (err) {
+      console.error('Like failed:', err);
+    }
+  };
+
+  const toggleSave = async () => {
+    if (!short) return;
+    const key = short._id;
+    const token = await getToken();
+    if (!token) return;
+
+    // Optimistic update
+    setSaved(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+
+    // API call
+    try {
+      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3001';
+      await fetch(`${backendUrl}/posts/${key}/favorite`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+      });
+    } catch (err) {
+      console.error('Save failed:', err);
+    }
+  };
+
+  const handleShare = async () => {
+    if (!short) return;
+    const shareUrl = `${window.location.origin}/post/${short._id}`;
+    const shareData = {
+      title: 'Check out this short on Alu',
+      text: short.safePrompt || 'Shared from Alu',
+      url: shareUrl,
+    };
+    try {
+      if (navigator.share) {
+        await navigator.share(shareData);
+      } else {
+        await navigator.clipboard.writeText(shareUrl);
+      }
+    } catch {
+      try { await navigator.clipboard.writeText(shareUrl); } catch { /* silent */ }
+    }
   };
 
   const goNext = useCallback(() => {
@@ -143,13 +220,22 @@ export default function ShortsTab({ searchQuery = '' }: ShortsTabProps) {
       className="w-full h-full flex items-center justify-center animate-fade-in select-none"
       onWheel={handleWheel}
     >
-      <div
-        className="relative w-full max-w-[400px] mx-auto overflow-hidden"
-        style={{ height: 'calc(100vh - 180px)', maxHeight: '720px' }}
-        onTouchStart={handleTouchStart}
-        onTouchMove={handleTouchMove}
-        onTouchEnd={handleTouchEnd}
-      >
+      {/* Desktop: Flex layout for video + comments side-by-side */}
+      <div className="relative flex items-center justify-center w-full h-full">
+        {/* Video container - shifts left on desktop when comments open */}
+        <div
+          className={`relative w-full max-w-[400px] mx-auto overflow-hidden transition-all duration-300 ${
+            !isMobile && showComments ? 'md:-translate-x-[200px]' : 'translate-x-0'
+          }`}
+          style={{
+            height: 'calc(100vh - 180px)',
+            maxHeight: '720px',
+            width: !isMobile && showComments ? '520px' : '400px'
+          }}
+          onTouchStart={handleTouchStart}
+          onTouchMove={handleTouchMove}
+          onTouchEnd={handleTouchEnd}
+        >
         {/* Video area — slides vertically */}
         <div
           className="w-full h-full rounded-2xl overflow-hidden relative bg-black"
@@ -205,17 +291,24 @@ export default function ShortsTab({ searchQuery = '' }: ShortsTabProps) {
               </div>
               <span className="text-white text-[11px] font-medium">{(short.likes || 0) + (liked.has(shortKey) ? 1 : 0)}</span>
             </button>
-            <button onClick={(e) => e.stopPropagation()} className="flex flex-col items-center gap-1">
-              <div className="w-10 h-10 rounded-full bg-white/15 backdrop-blur-sm flex items-center justify-center text-white">
+            <button onClick={(e) => { e.stopPropagation(); setShowComments(!showComments); }} className="flex flex-col items-center gap-1">
+              <div className={`w-10 h-10 rounded-full backdrop-blur-sm flex items-center justify-center transition-colors ${
+                showComments ? 'bg-[var(--alu-primary)] text-white' : 'bg-white/15 text-white'
+              }`}>
                 <CommentIcon size={22} />
               </div>
+              {(short.commentsCount ?? 0) > 0 && (
+                <span className="text-white text-[11px] font-medium">{short.commentsCount}</span>
+              )}
             </button>
-            <button onClick={(e) => e.stopPropagation()} className="flex flex-col items-center gap-1">
-              <div className="w-10 h-10 rounded-full bg-white/15 backdrop-blur-sm flex items-center justify-center text-white">
+            <button onClick={(e) => { e.stopPropagation(); toggleSave(); }} className="flex flex-col items-center gap-1">
+              <div className={`w-10 h-10 rounded-full backdrop-blur-sm flex items-center justify-center transition-colors ${
+                saved.has(shortKey) ? 'bg-[var(--alu-primary)] text-white' : 'bg-white/15 text-white'
+              }`}>
                 <BookmarkIcon size={22} />
               </div>
             </button>
-            <button onClick={(e) => e.stopPropagation()} className="flex flex-col items-center gap-1">
+            <button onClick={(e) => { e.stopPropagation(); handleShare(); }} className="flex flex-col items-center gap-1">
               <div className="w-10 h-10 rounded-full bg-white/15 backdrop-blur-sm flex items-center justify-center text-white">
                 <ShareIcon size={22} />
               </div>
@@ -232,6 +325,14 @@ export default function ShortsTab({ searchQuery = '' }: ShortsTabProps) {
           )}
         </div>
       </div>
+
+      {/* Comments drawer */}
+      <CommentsDrawer
+        postId={short?._id || ''}
+        isOpen={showComments}
+        onClose={() => setShowComments(false)}
+        variant={isMobile ? 'mobile' : 'desktop'}
+      />
     </div>
   );
 }

@@ -44,11 +44,21 @@ export default function PostModal({ post, onClose, onViewUser, onDeleted }: Post
   const [expandedReplies, setExpandedReplies] = useState<Set<string>>(new Set());
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [mediaLoaded, setMediaLoaded] = useState(false);
   const commentsEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const modalContentRef = useRef<HTMLDivElement>(null);
 
   const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3001';
   const isOwner = post.userId === user?.id;
+
+  // Scroll modal content to top on mount and when post changes
+  useEffect(() => {
+    setMediaLoaded(false);
+    if (modalContentRef.current) {
+      modalContentRef.current.scrollTop = 0;
+    }
+  }, [post._id]);
 
   useEffect(() => {
     setLoadingComments(true);
@@ -423,13 +433,33 @@ export default function PostModal({ post, onClose, onViewUser, onDeleted }: Post
         </button>
 
         <div className="w-[55%] md:w-[60%] bg-black flex items-center justify-center relative flex-shrink-0" style={{ minHeight: '300px', maxHeight: '90vh' }}>
+          {/* Loading spinner */}
+          {!mediaLoaded && (
+            <div className="absolute inset-0 flex items-center justify-center bg-black z-10">
+              <div className="w-12 h-12 border-3 border-white/20 border-t-white rounded-full animate-spin" />
+            </div>
+          )}
+
           {post.mediaType === 'image' ? (
             <div className="w-full h-full flex items-center justify-center">
-              <MediaItem post={post} />
+              <img
+                src={post.contentUrl}
+                alt={post.safePrompt}
+                className="object-contain w-full h-full"
+                onLoad={() => setMediaLoaded(true)}
+                onError={() => setMediaLoaded(true)}
+              />
             </div>
           ) : (
             <div className="w-full aspect-video relative">
-              <MediaItem post={post} />
+              <video
+                src={post.contentUrl}
+                controls
+                playsInline
+                className="object-contain w-full h-full"
+                onLoadedData={() => setMediaLoaded(true)}
+                onError={() => setMediaLoaded(true)}
+              />
             </div>
           )}
           {post.is_ai && (
@@ -439,7 +469,7 @@ export default function PostModal({ post, onClose, onViewUser, onDeleted }: Post
           )}
         </div>
 
-        <div className="w-[45%] md:w-[40%] flex flex-col max-h-[90vh]">
+        <div ref={modalContentRef} className="w-[45%] md:w-[40%] flex flex-col max-h-[90vh] overflow-y-auto">
           <div className="flex items-center gap-3 px-4 py-3 border-b border-[var(--alu-border)] shrink-0">
             <button onClick={handleViewUser} className="shrink-0">
               {post.avatarUrl ? (
