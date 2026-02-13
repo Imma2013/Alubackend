@@ -96,18 +96,23 @@ export default function HomeTab({ showAI, showNormal, searchQuery = '', onViewUs
 
   const isSearching = !!searchQuery.trim();
 
-  // Initialize likedByMe from post data
+  // Initialize likedByMe and savedPosts from post data
   useEffect(() => {
     if (!allPosts || !user) return;
     const myLikes = new Set<string>();
+    const mySaves = new Set<string>();
     const counts: Record<string, number> = {};
     for (const post of allPosts) {
       if (post.likedBy?.includes(user.id)) {
         myLikes.add(post._id);
       }
+      if (post.savedBy?.includes(user.id)) {
+        mySaves.add(post._id);
+      }
       counts[post._id] = post.likes ?? 0;
     }
     setLikedByMe(myLikes);
+    setSavedPosts(mySaves);
     setLikedPosts(counts);
   }, [allPosts, user]);
 
@@ -154,13 +159,44 @@ export default function HomeTab({ showAI, showNormal, searchQuery = '', onViewUs
     }
   };
 
-  const toggleSave = (key: string) => {
-    setSavedPosts(prev => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
+  const toggleSave = async (postId: string) => {
+    try {
+      const token = await getToken();
+      if (!token || !user) return;
+
+      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3001';
+      const res = await fetch(`${backendUrl}/posts/${postId}/favorite`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+
+        // Update local state
+        setSavedPosts(prev => {
+          const next = new Set(prev);
+          if (data.saved) {
+            next.add(postId);
+          } else {
+            next.delete(postId);
+          }
+          return next;
+        });
+
+        // Update Dexie
+        await db.posts.update(postId, {
+          savedBy: data.saved
+            ? [...((await db.posts.get(postId))?.savedBy || []), user.id]
+            : ((await db.posts.get(postId))?.savedBy || []).filter(id => id !== user.id)
+        });
+      }
+    } catch (err) {
+      console.error('Save failed:', err);
+    }
   };
 
   const handleShare = async (post: Post) => {
@@ -179,6 +215,16 @@ export default function HomeTab({ showAI, showNormal, searchQuery = '', onViewUs
     } catch {
       try { await navigator.clipboard.writeText(shareUrl); } catch { /* silent */ }
     }
+  };
+
+  const formatCount = (count: number) => {
+    if (count >= 1000000) {
+      return `${(count / 1000000).toFixed(1).replace(/\.0$/, '')}M`;
+    }
+    if (count >= 1000) {
+      return `${(count / 1000).toFixed(1).replace(/\.0$/, '')}k`;
+    }
+    return count.toString();
   };
 
   const timeAgo = (date: Date) => {
@@ -320,6 +366,9 @@ export default function HomeTab({ showAI, showNormal, searchQuery = '', onViewUs
                   </button>
                   <button onClick={() => setCommentsPostId(post._id)} className="flex items-center gap-1.5 text-alu-text-secondary hover:text-alu-text transition-colors">
                     <CommentIcon size={20} />
+                    {(post.commentsCount ?? 0) > 0 && (
+                      <span className="text-xs font-medium">{formatCount(post.commentsCount ?? 0)}</span>
+                    )}
                   </button>
                   <button
                     onClick={() => handleShare(post)}

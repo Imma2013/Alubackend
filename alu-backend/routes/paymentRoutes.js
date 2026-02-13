@@ -9,8 +9,6 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 // Credit pack amounts for one-time purchase
 const CREDIT_PACK = {
   bonusImages: 50,
-  bonusShorts: 20,
-  bonusLongVids: 10,
 };
 
 /**
@@ -93,14 +91,12 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
           {
             $inc: {
               bonusImages: CREDIT_PACK.bonusImages,
-              bonusShorts: CREDIT_PACK.bonusShorts,
-              bonusLongVids: CREDIT_PACK.bonusLongVids,
             },
             stripeCustomerId: session.customer,
           },
           { upsert: true }
         );
-        console.log(`User ${userId} received credit pack: +${CREDIT_PACK.bonusImages} images, +${CREDIT_PACK.bonusShorts} shorts, +${CREDIT_PACK.bonusLongVids} videos`);
+        console.log(`User ${userId} received credit pack: +${CREDIT_PACK.bonusImages} images`);
       }
       break;
     }

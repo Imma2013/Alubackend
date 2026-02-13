@@ -5,11 +5,13 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { useUser, useClerk, useAuth } from '@clerk/nextjs';
 import { db, Post } from '../../db';
 import MediaItem from '../MediaItem';
-import { SettingsIcon, ShieldIcon, FileTextIcon, LogOutIcon } from '../icons';
+import { SettingsIcon, ShieldIcon, FileTextIcon, LogOutIcon, MoreVertIcon } from '../icons';
 import PrivacyPolicy from '../PrivacyPolicy';
 import TermsConditions from '../TermsConditions';
 import EditProfile from '../EditProfile';
 import PostModal from '../PostModal';
+import PostOptionsMenu from '../PostOptionsMenu';
+import EditCaptionModal from '../EditCaptionModal';
 
 type ContentTab = 'posts' | 'shorts' | 'videos' | 'likes' | 'favorites';
 
@@ -49,11 +51,17 @@ export default function ProfileTab({ viewUserId, onBack, onViewUser }: ProfileTa
   const [copiedLink, setCopiedLink] = useState(false);
   const [selectedPost, setSelectedPost] = useState<Post | null>(null);
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
+  const [menuPost, setMenuPost] = useState<Post | null>(null);
+  const [editingPost, setEditingPost] = useState<Post | null>(null);
 
   // Other user state
   const [otherUser, setOtherUser] = useState<OtherUserProfile | null>(null);
   const [otherUserPosts, setOtherUserPosts] = useState<Post[]>([]);
   const [loadingProfile, setLoadingProfile] = useState(false);
+
+  // Favorites state
+  const [favoritePosts, setFavoritePosts] = useState<Post[]>([]);
+  const [loadingFavorites, setLoadingFavorites] = useState(false);
 
   // Follow state
   const [isFollowing, setIsFollowing] = useState(false);
@@ -125,6 +133,37 @@ export default function ProfileTab({ viewUserId, onBack, onViewUser }: ProfileTa
 
   const userPosts = isOwnProfile ? (ownPosts || []) : otherUserPosts;
 
+  // Fetch favorites when favorites tab is active
+  useEffect(() => {
+    if (activeContentTab !== 'favorites' || !isOwnProfile) {
+      setFavoritePosts([]);
+      return;
+    }
+
+    const fetchFavorites = async () => {
+      setLoadingFavorites(true);
+      try {
+        const token = await getToken();
+        if (!token) return;
+
+        const res = await fetch(`${backendUrl}/posts/favorites`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          setFavoritePosts(data.posts || []);
+        }
+      } catch (err) {
+        console.error('Failed to fetch favorites:', err);
+      } finally {
+        setLoadingFavorites(false);
+      }
+    };
+
+    fetchFavorites();
+  }, [activeContentTab, isOwnProfile, backendUrl, getToken]);
+
   const toggleProfileAI = () => {
     if (profileShowAI && !profileShowNormal) return;
     setProfileShowAI(!profileShowAI);
@@ -148,10 +187,14 @@ export default function ProfileTab({ viewUserId, onBack, onViewUser }: ProfileTa
         { key: 'videos', label: 'Videos' },
       ];
 
-  const tabFiltered = userPosts.filter((p: Post) => {
+  // Use favoritePosts when on favorites tab, otherwise use userPosts
+  const sourcePostsForTab = activeContentTab === 'favorites' ? favoritePosts : userPosts;
+
+  const tabFiltered = sourcePostsForTab.filter((p: Post) => {
     if (activeContentTab === 'posts') return p.mediaType === 'image';
     if (activeContentTab === 'shorts') return p.mediaType === 'video' && (!p.videoType || p.videoType === 'short');
     if (activeContentTab === 'videos') return p.mediaType === 'video' && p.videoType === 'long';
+    if (activeContentTab === 'favorites') return true; // Show all favorited content
     return true;
   });
 
@@ -497,14 +540,26 @@ export default function ProfileTab({ viewUserId, onBack, onViewUser }: ProfileTa
           currentContent.map((post) => (
             <div
               key={post._id}
-              className="aspect-square relative overflow-hidden bg-alu-surface cursor-pointer group"
-              onClick={() => setSelectedPost(post)}
+              className="aspect-square relative overflow-hidden bg-alu-surface group"
             >
-              <MediaItem post={post} />
+              <div className="cursor-pointer" onClick={() => setSelectedPost(post)}>
+                <MediaItem post={post} />
+              </div>
               {post.is_ai && (
                 <div className="absolute top-1.5 left-1.5 text-[9px] font-bold px-1.5 py-0.5 rounded bg-black/40 text-white backdrop-blur-sm z-10">
                   AI
                 </div>
+              )}
+              {isOwnProfile && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setMenuPost(post);
+                  }}
+                  className="absolute top-2 right-2 w-8 h-8 rounded-full bg-black/50 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 md:opacity-100 transition-opacity"
+                >
+                  <MoreVertIcon size={20} />
+                </button>
               )}
             </div>
           ))
@@ -516,6 +571,43 @@ export default function ProfileTab({ viewUserId, onBack, onViewUser }: ProfileTa
           </div>
         )}
       </div>
+
+      {/* Post Options Menu */}
+      {menuPost && (
+        <PostOptionsMenu
+          post={menuPost}
+          onClose={() => setMenuPost(null)}
+          onEdit={() => { setEditingPost(menuPost); setMenuPost(null); }}
+          onCopyLink={async () => {
+            const url = `${window.location.origin}/post/${menuPost._id}`;
+            try {
+              await navigator.clipboard.writeText(url);
+              setCopiedLink(true);
+              setTimeout(() => setCopiedLink(false), 2000);
+            } catch { /* silent */ }
+          }}
+          onDelete={() => setSelectedPost(menuPost)}
+        />
+      )}
+
+      {/* Edit Caption Modal */}
+      {editingPost && (
+        <EditCaptionModal
+          post={editingPost}
+          onClose={() => setEditingPost(null)}
+          onSaved={(newCaption) => {
+            // Caption updated, refresh will happen via Dexie live query
+            setEditingPost(null);
+          }}
+        />
+      )}
+
+      {/* Copied Link Toast */}
+      {copiedLink && (
+        <div className="fixed bottom-20 left-1/2 -translate-x-1/2 bg-black text-white text-sm px-4 py-2 rounded-full animate-fade-in z-[130]">
+          Link copied!
+        </div>
+      )}
     </div>
   );
 }

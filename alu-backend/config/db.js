@@ -7,15 +7,13 @@ const UserSchema = new mongoose.Schema({
   avatarUrl: { type: String, default: '' },
   bio: { type: String, default: '' },
   dailyImages: { type: Number, default: 0 },
-  dailyShorts: { type: Number, default: 0 },
-  dailyLongVids: { type: Number, default: 0 },
+  monthlyShorts: { type: Number, default: 0 },
   lastResetDate: { type: Date, default: Date.now },
+  lastMonthlyResetDate: { type: Date, default: Date.now },
   isPro: { type: Boolean, default: false },
   subscriptionId: { type: String },
   stripeCustomerId: { type: String },
   bonusImages: { type: Number, default: 0 },
-  bonusShorts: { type: Number, default: 0 },
-  bonusLongVids: { type: Number, default: 0 },
   followers: [{ type: String }],
   following: [{ type: String }],
 });
@@ -33,6 +31,7 @@ const PostSchema = new mongoose.Schema({
   timestamp: { type: Date, default: Date.now },
   likes: { type: Number, default: 0 },
   likedBy: [{ type: String }], // array of userIds who liked
+  savedBy: [{ type: String }], // array of userIds who favorited (private)
   isLongForm: { type: Boolean, default: false },
   thumbnailUrl: { type: String },
   visibility: { type: String, enum: ['everyone', 'followers', 'private'], default: 'everyone' },
@@ -50,17 +49,20 @@ const CommentSchema = new mongoose.Schema({
   avatarUrl: { type: String, default: '' },
   likes: { type: Number, default: 0 },
   likedBy: [{ type: String }],
+  parentCommentId: { type: mongoose.Schema.Types.ObjectId, ref: 'Comment', default: null, index: true },
+  imageUrl: { type: String, default: '' },
 }, { timestamps: true });
 
 // Notification Schema
 const NotificationSchema = new mongoose.Schema({
   userId: { type: String, required: true, index: true }, // who receives this
-  type: { type: String, enum: ['like', 'comment', 'follow'], required: true },
+  type: { type: String, enum: ['like', 'comment', 'follow', 'comment_like', 'reply'], required: true },
   fromUserId: { type: String, required: true },
   fromDisplayName: { type: String, default: '' },
   fromAvatarUrl: { type: String, default: '' },
   postId: { type: mongoose.Schema.Types.ObjectId, ref: 'Post' },
   commentId: { type: mongoose.Schema.Types.ObjectId, ref: 'Comment' },
+  parentCommentId: { type: mongoose.Schema.Types.ObjectId, ref: 'Comment' }, // for reply notifications
   commentText: { type: String }, // preview of comment
   read: { type: Boolean, default: false },
 }, { timestamps: true });

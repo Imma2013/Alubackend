@@ -38,16 +38,17 @@ alu-frontend/   (Next.js + Tailwind) — ON VERCEL, DEPLOYED (alu-teal-pi.vercel
 - Gemini Flash 2.0 as orchestrator/prompt cleaner + scene splitter (conductor.js)
 - FFmpeg via ffmpeg-static (video stitching/concatenation)
 
-## Daily Limits (Freemium)
-| Content Type | Free Tier | Pro (10x) |
-|--------------|-----------|-----------|
-| Images | 3/day | 30/day |
-| Shorts | 2/day | 20/day |
-| Videos | 1/day | 10/day |
+## Content Limits (Freemium)
+| Content Type | Free Tier | Pro ($10/mo) |
+|--------------|-----------|--------------|
+| Manual Upload | Unlimited | Unlimited |
+| AI Images | 3/day | 30/day |
+| AI Shorts | 0 (Pro-only) | 5/month |
+| AI Long Videos | Disabled | Disabled |
 
 ### Monetization
-- **Pro subscription:** $10/month via Stripe — 10x daily limits
-- **Credit pack (one-time):** $10 — +50 images, +20 shorts, +10 videos (bonus credits, don't reset daily)
+- **Pro subscription:** $10/month via Stripe — 30 AI images/day + 5 AI shorts/month
+- **Credit pack (one-time):** $10 — +50 AI images (bonus credits, don't reset daily)
 
 ---
 
@@ -552,10 +553,95 @@ Merged uncommitted work from another Claude session that built core social featu
 - Vercel: `NEXT_PUBLIC_STRIPE_PRO_PRICE_ID`, `NEXT_PUBLIC_STRIPE_CREDIT_PRICE_ID` (create Price objects in Stripe Dashboard first)
 - Render: `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `FRONTEND_URL`
 
+### 2026-02-12: Comments System + Notifications + Favorites — Session 11 (Haiku)
+
+**Backend — Comment Replies + Images:**
+- **Comment Schema updated:** Added `parentCommentId` (for nested replies), `imageUrl` (for comment image attachments)
+- **Notification Schema updated:** Added `'comment_like'` and `'reply'` to notification types enum, `parentCommentId` field
+- **GET /posts/:id/comments:** Returns nested comment structure — top-level comments with `replyCount` and `replies[]` array
+- **POST /posts/:postId/comments/:commentId/like:** Like/unlike comments, creates `comment_like` notification
+- **POST /posts/:id/comments (updated):** Accepts `parentCommentId` and `imageUrl`, creates `reply` notification for parent comment author
+- **Comment images:** Single image upload via Cloudinary (`alu_comments` preset)
+
+**Backend — Favorites System:**
+- **Post Schema updated:** Added `savedBy: [String]` for private favorites (TikTok-style)
+- **POST /posts/:id/favorite:** Toggle favorite (add/remove userId from savedBy array)
+- **GET /posts/favorites:** Fetch all posts favorited by current user
+
+**Backend — Notifications Grouping:**
+- **GET /notifications (updated):** Returns Instagram-style grouped notifications — groups by (postId + type), returns aggregated user list with count
+- Example: `{ type: 'like', postId: 'x', users: [{userId, displayName, avatarUrl}], count: 5 }`
+
+**Frontend — Comment System:**
+- **CommentsPanel.tsx (rewritten):** Instagram-style nested comments with image uploads
+  - Reply button on top-level comments
+  - Like button on all comments (shows count)
+  - Image attachment (single image via file picker, replaces emoji)
+  - "View/Hide X replies" toggle with indented reply threads
+  - "Replying to [username]" indicator when replying
+  - Image preview before posting
+- **PostModal.tsx (updated):** Same nested comment functionality + image attachments
+
+**Frontend — Notifications Tab:**
+- **NEW: NotificationItem.tsx:** Grouped notification renderer with stacked avatars (max 3 visible, +N indicator)
+- **NotificationsTab.tsx (rewritten):** Full Instagram-style grouped notifications UI
+  - Fetches grouped notifications on mount
+  - Auto-marks all as read when tab opens
+  - Click notification → opens PostModal with related post
+  - Stacked avatars for grouped actions
+  - Text formatting: "User1, User2 and 3 others liked your post"
+  - Empty state with icon
+
+**Frontend — Favorites System:**
+- **ProfileTab.tsx (updated):**
+  - Fetches favorites from `GET /posts/favorites` when Favorites tab is active
+  - Uses `sourcePostsForTab` to switch between user posts and favorited posts
+  - Shows favorited posts in same grid layout
+- **PostModal.tsx (updated):** BookmarkIcon wired to `POST /posts/:id/favorite` API, updates Dexie
+- **HomeTab.tsx (updated):** BookmarkIcon wired to API, initializes savedPosts from post.savedBy data
+- **db.ts:** Added `savedBy?: string[]` to Post interface
+
+**Manual Upload Fixes:**
+- **"Is this AI" toggle fixed:** Backend now reads `is_ai` from request instead of hardcoding to `false`
+- **Video quality selector added:** UI shows 360p/720p/1080p/4K options (4K only for long videos, default 360p)
+- **Backend quality processing:** Maps quality to Cloudinary height transformations (360/720/1080/2160)
+
+**New Files:**
+- `alu-frontend/src/app/components/NotificationItem.tsx` — Grouped notification component with stacked avatars
+- `alu-frontend/src/app/components/EditCaptionModal.tsx` — Edit caption modal (from previous session)
+- `alu-frontend/src/app/components/PostOptionsMenu.tsx` — 3-dot menu for profile posts (from previous session)
+
+**Modified Files (Backend — 3 files):**
+- `alu-backend/config/db.js` — Comment schema: parentCommentId, imageUrl | Notification schema: comment_like, reply types | Post schema: savedBy
+- `alu-backend/routes/postRoutes.js` — Nested comments fetch, comment like endpoint, reply support, favorite endpoints
+- `alu-backend/routes/notificationRoutes.js` — Grouped notifications aggregation by (postId + type)
+- `alu-backend/routes/uploadRoutes.js` — Fixed is_ai reading, added quality parameter with Cloudinary transformations
+
+**Modified Files (Frontend — 5 files):**
+- `alu-frontend/src/app/components/CommentsPanel.tsx` — Complete rewrite with nested replies, images, likes
+- `alu-frontend/src/app/components/PostModal.tsx` — Nested comments, image attachments, BookmarkIcon API
+- `alu-frontend/src/app/components/tabs/NotificationsTab.tsx` — Complete rewrite with grouped notifications
+- `alu-frontend/src/app/components/tabs/ProfileTab.tsx` — Favorites fetch and display logic
+- `alu-frontend/src/app/components/tabs/HomeTab.tsx` — BookmarkIcon API, savedPosts initialization
+- `alu-frontend/src/app/components/tabs/CreateTab.tsx` — Video quality selector UI, is_ai toggle
+- `alu-frontend/src/app/db.ts` — Post interface: savedBy field
+
+**Features Summary:**
+✅ Nested comment replies (Instagram-style, max 1 level deep)
+✅ Comment images (single image per comment)
+✅ Comment likes with notifications (private, like TikTok)
+✅ Instagram-style grouped notifications with stacked avatars
+✅ TikTok-style private favorites system
+✅ Profile Favorites tab
+✅ "Is this AI" toggle working for manual uploads
+✅ Video quality selector (360p to 4K)
+
+**Build:** Frontend passes `npm run build` clean
+
 ### NEXT SESSION PRIORITIES:
-1. **Real NotificationsTab**: Wire to `/notifications` endpoint, show like/comment/follow events with avatars
-2. **Real-time messaging**: Chat interface with WebSocket/SSE, text + image in chats
-3. **Stories**: Upload photo stories (from camera roll), plus button on profile pic, swipe through
-4. **PWA manifest + service worker**
-5. **@ mention system**: Tag users in comments/captions
-6. **Image cropping on upload** (Instagram-style)
+1. **Real-time messaging**: Chat interface with WebSocket/SSE, text + image in chats
+2. **Stories**: Upload photo stories (from camera roll), plus button on profile pic, swipe through
+3. **PWA manifest + service worker**
+4. **@ mention system**: Tag users in comments/captions
+5. **Image cropping on upload** (Instagram-style)
+6. **Notification badges**: Show unread count on NotificationsIcon in nav

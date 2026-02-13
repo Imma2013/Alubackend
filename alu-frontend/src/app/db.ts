@@ -15,11 +15,13 @@ export interface Post {
   thumbnailUrl?: string;
   likes?: number;
   likedBy?: string[];
+  savedBy?: string[];
   originalPrompt?: string;
   caption?: string;
   visibility?: 'everyone' | 'followers' | 'private';
   displayName?: string;  // User's display name (from Clerk)
   avatarUrl?: string;     // User's profile picture URL (from Clerk)
+  commentsCount?: number; // Number of comments on this post
 }
 
 export interface SyncState {

@@ -29,11 +29,25 @@ export async function saveFileFromUrl(url: string, suggestedName: string): Promi
 /**
  * Saves a Blob/File directly to OPFS (no network download needed).
  * Used for user uploads where we already have the file in memory.
+ * Returns null if OPFS is not supported (graceful fallback).
  */
-export async function saveFileFromBlob(blob: Blob, suggestedName: string): Promise<FileSystemFileHandle> {
+export async function saveFileFromBlob(blob: Blob, suggestedName: string): Promise<FileSystemFileHandle | null> {
   try {
+    // Check if File System Access API is available
+    if (!('storage' in navigator) || typeof navigator.storage.getDirectory !== 'function') {
+      console.warn('File System Access API not supported, skipping OPFS save');
+      return null; // Graceful fallback - just don't save locally
+    }
+
     const root = await navigator.storage.getDirectory();
     const fileHandle = await root.getFileHandle(suggestedName, { create: true });
+
+    // Check if createWritable is available
+    if (typeof fileHandle.createWritable !== 'function') {
+      console.warn('createWritable not supported, skipping OPFS save');
+      return null;
+    }
+
     const writable = await fileHandle.createWritable();
     await writable.write(blob);
     await writable.close();
@@ -41,7 +55,8 @@ export async function saveFileFromBlob(blob: Blob, suggestedName: string): Promi
     return fileHandle;
   } catch (error) {
     console.error('Failed to save blob to OPFS:', error);
-    throw error;
+    // Don't throw - just return null and continue without local save
+    return null;
   }
 }
 

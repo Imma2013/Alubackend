@@ -19,11 +19,11 @@ cloudinary.config({
   api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
-// Daily Limits
+// Limits
 const LIMITS = {
-  image: 3,
-  short: 2,
-  long: 1
+  image: 3,    // daily for Free, 30 for Pro (10x multiplier)
+  short: 5,    // monthly for Pro ONLY (no Free access)
+  long: 0      // killed
 };
 
 /**
@@ -99,17 +99,25 @@ async function generateContent(userId, prompt, type, isLongVideo = false, visibi
     await user.save();
   }
 
-  let limitKey = 'dailyImages';
-  if (type === 'video') {
-    limitKey = isLongVideo ? 'dailyLongVids' : 'dailyShorts';
-  }
-
-  const limitType = limitKey === 'dailyLongVids' ? 'long' : (limitKey === 'dailyShorts' ? 'short' : 'image');
-  const baseLimit = LIMITS[limitType] * (user.isPro ? 10 : 1);
-  const bonusKey = limitKey === 'dailyLongVids' ? 'bonusLongVids' : (limitKey === 'dailyShorts' ? 'bonusShorts' : 'bonusImages');
-  const bonus = user[bonusKey] || 0;
-  if (user[limitKey] >= baseLimit + bonus) {
-    throw new Error('429: Daily limit reached for this content type.');
+  // Limit checking
+  if (type === 'image') {
+    // Images: daily, Free gets 3, Pro gets 30, bonus credits stack
+    const baseLimit = LIMITS.image * (user.isPro ? 10 : 1);
+    const bonus = user.bonusImages || 0;
+    if (user.dailyImages >= baseLimit + bonus) {
+      throw new Error('429: Daily image limit reached.');
+    }
+  } else if (type === 'video' && !isLongVideo) {
+    // Shorts: monthly, Pro-only, 5/month, no bonus
+    if (!user.isPro) {
+      throw new Error('403: AI Shorts are Pro-only. Upgrade to generate 5 shorts/month.');
+    }
+    if (user.monthlyShorts >= LIMITS.short) {
+      throw new Error('429: Monthly shorts limit reached (5/month).');
+    }
+  } else if (type === 'video' && isLongVideo) {
+    // Long videos: killed
+    throw new Error('410: Long video generation is temporarily disabled.');
   }
 
   const safePrompt = await cleanPrompt(prompt);
@@ -122,8 +130,8 @@ async function generateContent(userId, prompt, type, isLongVideo = false, visibi
 
   try {
     if (type === 'image') {
-      // --- IMAGE: NanoBanana Flash (Gemini 2.0 Flash Image Gen) ---
-      modelName = 'gemini-2.0-flash-preview-image-generation';
+      // --- IMAGE: NanoBanana Flash (Gemini 2.0 Flash Exp) ---
+      modelName = 'gemini-2.0-flash-exp';
       provider = 'NanoBanana Flash';
       console.log(`Dispatching to ${provider}...`);
 
@@ -230,7 +238,12 @@ async function generateContent(userId, prompt, type, isLongVideo = false, visibi
       throw new Error('Long video generation uses the video stitching pipeline. Use POST /generate/long-video instead.');
     }
 
-    user[limitKey] += 1;
+    // Increment usage counter
+    if (type === 'image') {
+      user.dailyImages += 1;
+    } else if (type === 'video' && !isLongVideo) {
+      user.monthlyShorts += 1;
+    }
     await user.save();
 
     const newPost = await Post.create({

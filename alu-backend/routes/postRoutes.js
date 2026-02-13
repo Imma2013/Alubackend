@@ -62,10 +62,28 @@ router.post('/:id/like', clerkAuth, async (req, res) => {
 // ─── GET comments for a post ───
 router.get('/:id/comments', async (req, res) => {
     try {
-        const comments = await Comment.find({ postId: req.params.id })
+        // Get all comments for this post
+        const allComments = await Comment.find({ postId: req.params.id })
             .sort({ createdAt: -1 })
-            .limit(100);
-        res.json({ comments });
+            .limit(500);
+
+        // Separate top-level comments from replies
+        const topLevelComments = allComments.filter(c => !c.parentCommentId);
+        const replies = allComments.filter(c => c.parentCommentId);
+
+        // Add replyCount and nested replies to each top-level comment
+        const commentsWithReplies = topLevelComments.map(comment => {
+            const commentReplies = replies.filter(r =>
+                r.parentCommentId && r.parentCommentId.toString() === comment._id.toString()
+            );
+            return {
+                ...comment.toObject(),
+                replyCount: commentReplies.length,
+                replies: commentReplies.map(r => r.toObject())
+            };
+        });
+
+        res.json({ comments: commentsWithReplies });
     } catch (err) {
         console.error('Get comments error:', err);
         res.status(500).json({ error: 'Failed to fetch comments' });
@@ -76,7 +94,7 @@ router.get('/:id/comments', async (req, res) => {
 router.post('/:id/comments', clerkAuth, async (req, res) => {
     try {
         const userId = req.auth.sub;
-        const { text, displayName, avatarUrl } = req.body;
+        const { text, displayName, avatarUrl, parentCommentId, imageUrl } = req.body;
 
         if (!text || !text.trim()) {
             return res.status(400).json({ error: 'Comment text is required' });
@@ -85,32 +103,106 @@ router.post('/:id/comments', clerkAuth, async (req, res) => {
         const post = await Post.findById(req.params.id);
         if (!post) return res.status(404).json({ error: 'Post not found' });
 
+        // If it's a reply, verify parent comment exists
+        if (parentCommentId) {
+            const parentComment = await Comment.findById(parentCommentId);
+            if (!parentComment) {
+                return res.status(404).json({ error: 'Parent comment not found' });
+            }
+        }
+
         const comment = await Comment.create({
             postId: post._id,
             userId,
             text: text.trim().slice(0, 500),
             displayName: displayName || '',
             avatarUrl: avatarUrl || '',
+            parentCommentId: parentCommentId || null,
+            imageUrl: imageUrl || '',
         });
 
-        // Create notification for post owner (don't notify yourself)
-        if (post.userId !== userId) {
-            await Notification.create({
-                userId: post.userId,
-                type: 'comment',
-                fromUserId: userId,
-                fromDisplayName: displayName || '',
-                fromAvatarUrl: avatarUrl || '',
-                postId: post._id,
-                commentId: comment._id,
-                commentText: text.trim().slice(0, 100),
-            });
+        // Create notification
+        if (parentCommentId) {
+            // It's a reply - notify the parent comment author
+            const parentComment = await Comment.findById(parentCommentId);
+            if (parentComment && parentComment.userId !== userId) {
+                await Notification.create({
+                    userId: parentComment.userId,
+                    type: 'reply',
+                    fromUserId: userId,
+                    fromDisplayName: displayName || '',
+                    fromAvatarUrl: avatarUrl || '',
+                    postId: post._id,
+                    commentId: comment._id,
+                    parentCommentId: parentCommentId,
+                    commentText: text.trim().slice(0, 100),
+                });
+            }
+        } else {
+            // Top-level comment - notify post owner
+            if (post.userId !== userId) {
+                await Notification.create({
+                    userId: post.userId,
+                    type: 'comment',
+                    fromUserId: userId,
+                    fromDisplayName: displayName || '',
+                    fromAvatarUrl: avatarUrl || '',
+                    postId: post._id,
+                    commentId: comment._id,
+                    commentText: text.trim().slice(0, 100),
+                });
+            }
         }
 
         res.status(201).json({ comment });
     } catch (err) {
         console.error('Comment error:', err);
         res.status(500).json({ error: 'Failed to add comment' });
+    }
+});
+
+// ─── LIKE / UNLIKE a comment ───
+router.post('/:postId/comments/:commentId/like', clerkAuth, async (req, res) => {
+    try {
+        const userId = req.auth.sub;
+        const { displayName, avatarUrl } = req.body;
+        const comment = await Comment.findById(req.params.commentId);
+        if (!comment) return res.status(404).json({ error: 'Comment not found' });
+
+        const alreadyLiked = comment.likedBy.includes(userId);
+
+        if (alreadyLiked) {
+            // Unlike
+            comment.likedBy = comment.likedBy.filter(id => id !== userId);
+            comment.likes = Math.max(0, comment.likes - 1);
+            await comment.save();
+            return res.json({ liked: false, likes: comment.likes });
+        }
+
+        // Like
+        comment.likedBy.push(userId);
+        comment.likes += 1;
+        await comment.save();
+
+        // Create notification for comment owner (don't notify yourself)
+        if (comment.userId !== userId) {
+            const post = await Post.findById(req.params.postId);
+            await Notification.create({
+                userId: comment.userId,
+                type: 'comment_like',
+                fromUserId: userId,
+                fromDisplayName: displayName || '',
+                fromAvatarUrl: avatarUrl || '',
+                postId: post ? post._id : null,
+                commentId: comment._id,
+                commentText: comment.text.slice(0, 100),
+            });
+        }
+
+        res.json({ liked: true, likes: comment.likes });
+    } catch (err) {
+        console.error('Comment like error:', err);
+        res.status(500).json({ error: 'Failed to like comment' });
     }
 });
 
@@ -127,6 +219,27 @@ router.delete('/:postId/comments/:commentId', clerkAuth, async (req, res) => {
     } catch (err) {
         console.error('Delete comment error:', err);
         res.status(500).json({ error: 'Failed to delete comment' });
+    }
+});
+
+// ─── UPDATE post caption (only by author) ───
+router.put('/:id/caption', clerkAuth, async (req, res) => {
+    try {
+        const userId = req.auth.sub;
+        const { caption } = req.body;
+        const post = await Post.findById(req.params.id);
+
+        if (!post) return res.status(404).json({ error: 'Post not found' });
+        if (post.userId !== userId) return res.status(403).json({ error: 'Not authorized' });
+
+        post.safePrompt = caption;
+        post.caption = caption;
+        await post.save();
+
+        res.json({ success: true, post });
+    } catch (err) {
+        console.error('Update caption error:', err);
+        res.status(500).json({ error: 'Failed to update caption' });
     }
 });
 
@@ -163,6 +276,55 @@ router.delete('/:id', clerkAuth, async (req, res) => {
     } catch (err) {
         console.error('Delete post error:', err);
         res.status(500).json({ error: 'Failed to delete post' });
+    }
+});
+
+// ─── FAVORITE / UNFAVORITE a post ───
+router.post('/:id/favorite', clerkAuth, async (req, res) => {
+    try {
+        const userId = req.auth.sub;
+        const post = await Post.findById(req.params.id);
+        if (!post) return res.status(404).json({ error: 'Post not found' });
+
+        const alreadySaved = post.savedBy.includes(userId);
+
+        if (alreadySaved) {
+            // Unfavorite
+            post.savedBy = post.savedBy.filter(id => id !== userId);
+            await post.save();
+            return res.json({ saved: false });
+        }
+
+        // Favorite
+        post.savedBy.push(userId);
+        await post.save();
+        res.json({ saved: true });
+    } catch (err) {
+        console.error('Favorite error:', err);
+        res.status(500).json({ error: 'Failed to favorite post' });
+    }
+});
+
+// ─── GET all favorited posts for current user ───
+router.get('/favorites', clerkAuth, async (req, res) => {
+    try {
+        const userId = req.auth.sub;
+        const posts = await Post.find({ savedBy: userId })
+            .sort({ timestamp: -1 })
+            .limit(100);
+
+        // Add comment counts
+        const postsWithCounts = await Promise.all(
+            posts.map(async (post) => {
+                const commentCount = await Comment.countDocuments({ postId: post._id });
+                return { ...post.toObject(), commentsCount: commentCount };
+            })
+        );
+
+        res.json({ posts: postsWithCounts });
+    } catch (err) {
+        console.error('Get favorites error:', err);
+        res.status(500).json({ error: 'Failed to fetch favorites' });
     }
 });
 

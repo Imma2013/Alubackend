@@ -89,15 +89,11 @@ app.get('/usage', clerkAuth, async (req, res) => {
     const proMultiplier = user.isPro ? 10 : 1;
     res.json({
       dailyImages: user.dailyImages || 0,
-      dailyShorts: user.dailyShorts || 0,
-      dailyLongVids: user.dailyLongVids || 0,
+      monthlyShorts: user.monthlyShorts || 0,
       bonusImages: user.bonusImages || 0,
-      bonusShorts: user.bonusShorts || 0,
-      bonusLongVids: user.bonusLongVids || 0,
       limits: {
         image: 3 * proMultiplier,
-        short: 2 * proMultiplier,
-        long: 1 * proMultiplier,
+        short: user.isPro ? 5 : 0,  // Pro gets 5/month, Free gets 0
       },
       isPro: user.isPro || false,
     });
@@ -120,7 +116,17 @@ app.get('/feed', async (req, res) => {
     if (media === 'video') filter.mediaType = 'video';
 
     const posts = await Post.find(filter).sort({ timestamp: -1 }).limit(50);
-    res.json(posts);
+
+    // Add comment counts to each post
+    const { Comment } = require('./config/db');
+    const postsWithCounts = await Promise.all(
+      posts.map(async (post) => {
+        const commentCount = await Comment.countDocuments({ postId: post._id });
+        return { ...post.toObject(), commentsCount: commentCount };
+      })
+    );
+
+    res.json(postsWithCounts);
   } catch (error) {
     console.error('Feed Error:', error);
     res.status(500).json({ error: 'Failed to fetch feed' });
@@ -129,45 +135,6 @@ app.get('/feed', async (req, res) => {
 
 app.get('/', (req, res) => {
   res.send('Alu API is running with Conductor & CreditGuard');
-});
-
-// --- Long Video Stitching ---
-app.post('/generate/long-video', clerkAuth, async (req, res) => {
-  try {
-    const userId = req.auth.sub;
-    const { prompt, durationSeconds, visibility, displayName, avatarUrl } = req.body;
-
-    if (!prompt) {
-      return res.status(400).json({ error: 'Missing prompt' });
-    }
-
-    const duration = Math.min(Math.max(durationSeconds || 300, 30), 600); // 30s - 10min
-
-    // Check daily limit
-    let user = await User.findOne({ userId });
-    if (!user) user = await User.create({ userId, displayName, avatarUrl });
-    if (user.dailyLongVids >= 1 && !user.isPro) {
-      return res.status(429).json({ error: 'Daily long video limit reached. Upgrade to Pro for more.' });
-    }
-
-    // Create job with options
-    const job = createJob(userId, prompt, duration, visibility || 'everyone', {
-      aspectRatio: '16:9',
-      videoType: 'long',
-      displayName: displayName || '',
-      avatarUrl: avatarUrl || '',
-    });
-
-    // Start processing in background (fire and forget)
-    processVideoJob(job).catch(err => {
-      console.error(`Background video job ${job.jobId} error:`, err);
-    });
-
-    res.status(202).json({ jobId: job.jobId, status: 'queued' });
-  } catch (error) {
-    console.error('Long Video Error:', error);
-    res.status(500).json({ error: 'Failed to start video generation' });
-  }
 });
 
 // --- Short Video Stitching (up to 60s, 9:16 vertical) ---
@@ -182,11 +149,14 @@ app.post('/generate/short-video', clerkAuth, async (req, res) => {
 
     const duration = Math.min(Math.max(durationSeconds || 60, 8), 60); // 8s - 60s
 
-    // Check daily limit
+    // Check monthly limit (Pro-only)
     let user = await User.findOne({ userId });
     if (!user) user = await User.create({ userId, displayName, avatarUrl });
-    if (user.dailyShorts >= 2 && !user.isPro) {
-      return res.status(429).json({ error: 'Daily shorts limit reached. Upgrade to Pro for more.' });
+    if (!user.isPro) {
+      return res.status(403).json({ error: 'AI Shorts are Pro-only. Upgrade to generate 5 shorts/month.' });
+    }
+    if (user.monthlyShorts >= 5) {
+      return res.status(429).json({ error: 'Monthly shorts limit reached (5/month).' });
     }
 
     // Create job with 9:16 aspect ratio for shorts

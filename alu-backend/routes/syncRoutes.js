@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { Post } = require('../config/db');
+const { Post, Comment } = require('../config/db');
 const clerkAuth = require('../middleware/clerkAuth');
 
 // POST /sync/pull
@@ -15,10 +15,18 @@ router.post('/pull', async (req, res) => {
       query.updatedAt = { $gt: new Date(lastSyncTime) };
     }
 
-    const changes = await Post.find(query).sort({ updatedAt: 1 }).limit(100);
+    const posts = await Post.find(query).sort({ updatedAt: 1 }).limit(100);
+
+    // Add comment counts to each post
+    const changesWithCounts = await Promise.all(
+      posts.map(async (post) => {
+        const commentCount = await Comment.countDocuments({ postId: post._id });
+        return { ...post.toObject(), commentsCount: commentCount };
+      })
+    );
 
     res.json({
-      changes,
+      changes: changesWithCounts,
       timestamp: new Date().toISOString()
     });
   } catch (error) {

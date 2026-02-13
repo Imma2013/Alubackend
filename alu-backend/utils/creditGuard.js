@@ -6,22 +6,39 @@ const initCreditGuard = () => {
   cron.schedule('0 0 * * *', async () => {
     console.log('🔄 Running Daily Credit Reset...');
     try {
-      const result = await User.updateMany({}, {
-        $set: {
-          dailyImages: 0,
-          dailyShorts: 0,
-          dailyLongVids: 0,
-          lastResetDate: new Date()
+      const now = new Date();
+      const users = await User.find({});
+
+      let dailyResetCount = 0;
+      let monthlyResetCount = 0;
+
+      for (const user of users) {
+        const updates = {};
+
+        // Daily reset: images only
+        updates.dailyImages = 0;
+        updates.lastResetDate = now;
+        dailyResetCount++;
+
+        // Monthly reset: check if month changed
+        const lastMonthlyReset = user.lastMonthlyResetDate || new Date(0);
+        if (now.getMonth() !== lastMonthlyReset.getMonth() || now.getFullYear() !== lastMonthlyReset.getFullYear()) {
+          updates.monthlyShorts = 0;
+          updates.lastMonthlyResetDate = now;
+          monthlyResetCount++;
         }
-      });
-      console.log(`✅ Credits reset for ${result.modifiedCount} users.`);
+
+        await User.updateOne({ userId: user.userId }, { $set: updates });
+      }
+
+      console.log(`✅ Daily reset: ${dailyResetCount} users | Monthly reset: ${monthlyResetCount} users`);
     } catch (error) {
       console.error('❌ Error resetting credits:', error);
     }
   }, {
     timezone: "UTC"
   });
-  console.log('🛡️ CreditGuard Initialized: Reset scheduled for Midnight UTC.');
+  console.log('🛡️ CreditGuard Initialized: Daily + Monthly reset scheduled for Midnight UTC.');
 };
 
 module.exports = initCreditGuard;

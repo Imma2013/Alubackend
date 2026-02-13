@@ -31,10 +31,11 @@ export default function CreateTab() {
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const [isAI, setIsAI] = useState(false);
+  const [videoQuality, setVideoQuality] = useState<'360p' | '720p' | '1080p' | '4k'>('360p');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Real usage data
-  const [usage, setUsage] = useState<{ dailyImages: number; dailyShorts: number; dailyLongVids: number; limits: { image: number; short: number; long: number }; isPro: boolean } | null>(null);
+  const [usage, setUsage] = useState<{ dailyImages: number; monthlyShorts: number; bonusImages: number; limits: { image: number; short: number }; isPro: boolean } | null>(null);
 
   useEffect(() => {
     const fetchUsage = async () => {
@@ -55,9 +56,8 @@ export default function CreateTab() {
   }, [success]); // re-fetch after successful generation
 
   const types: { key: ContentType; label: string; desc: string; icon: React.ReactNode }[] = [
-    { key: 'image', label: 'Image', desc: 'Up to 3 photos', icon: <ImageIcon size={24} /> },
-    { key: 'short', label: 'Short', desc: 'Up to 1 min', icon: <ZapIcon size={24} /> },
-    { key: 'video', label: 'Video', desc: '1-10 min', icon: <FilmIcon size={24} /> },
+    { key: 'image', label: 'Image', desc: 'AI generated', icon: <ImageIcon size={24} /> },
+    { key: 'short', label: 'Short', desc: 'Pro only', icon: <ZapIcon size={24} /> },
   ];
 
   const privacyOptions = [
@@ -94,6 +94,7 @@ export default function CreateTab() {
     if (preview) URL.revokeObjectURL(preview);
     setPreview(null);
     setIsAI(false);
+    setVideoQuality('360p');
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
@@ -117,6 +118,7 @@ export default function CreateTab() {
       formData.append('visibility', privacy);
       formData.append('displayName', displayName);
       formData.append('avatarUrl', avatarUrl);
+      if (!file.type.startsWith('image/')) formData.append('quality', videoQuality);
 
       const response = await fetch(
         `${process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3001'}/upload`,
@@ -135,15 +137,15 @@ export default function CreateTab() {
       const result = await response.json();
 
       if (result.post) {
-        // Save file locally to OPFS (from the File object directly, not re-download)
+        // Try to save file locally to OPFS (may return null if not supported)
         const ext = result.post.mediaType === 'image' ? 'png' : 'mp4';
         const fileName = `${result.post._id}.${ext}`;
-        await saveFileFromBlob(file, fileName);
+        const fileHandle = await saveFileFromBlob(file, fileName);
 
-        // Save to Dexie
+        // Save to Dexie (use contentUrl from backend if OPFS failed)
         await db.posts.put({
           ...result.post,
-          contentUrl: fileName,
+          contentUrl: fileHandle ? fileName : result.post.contentUrl,
           synced: 1,
           updatedAt: new Date(),
         });
@@ -176,11 +178,9 @@ export default function CreateTab() {
 
       const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3001';
 
-      if (selectedType === 'video' || selectedType === 'short') {
-        // --- VIDEO STITCHING: shorts (60s, 9:16) or long (5min, 16:9) ---
-        const isShort = selectedType === 'short';
-        const endpoint = isShort ? '/generate/short-video' : '/generate/long-video';
-        const res = await fetch(`${backendUrl}${endpoint}`, {
+      if (selectedType === 'short') {
+        // --- SHORT VIDEO STITCHING: 60s, 9:16 ---
+        const res = await fetch(`${backendUrl}/generate/short-video`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -188,7 +188,7 @@ export default function CreateTab() {
           },
           body: JSON.stringify({
             prompt: prompt.trim(),
-            durationSeconds: isShort ? 60 : 300,
+            durationSeconds: 60,
             visibility: privacy,
             displayName,
             avatarUrl,
@@ -202,7 +202,7 @@ export default function CreateTab() {
 
         const { jobId } = await res.json();
         setVideoJobId(jobId);
-        setVideoStep(isShort ? 'Starting short generation...' : 'Starting video generation...');
+        setVideoStep('Starting short generation...');
 
         // Poll for progress
         let complete = false;
@@ -231,9 +231,9 @@ export default function CreateTab() {
                 contentUrl: fileName,
                 safePrompt: prompt.trim(),
                 mediaType: 'video',
-                videoType: isShort ? 'short' : 'long',
+                videoType: 'short',
                 is_ai: true,
-                isLongForm: !isShort,
+                isLongForm: false,
                 userId: '',
                 timestamp: new Date(),
                 synced: 1,
@@ -248,7 +248,7 @@ export default function CreateTab() {
             setPrompt('');
             setCaption('');
           } else if (status.status === 'failed') {
-            throw new Error(status.error || 'Video generation failed');
+            throw new Error(status.error || 'Short video generation failed');
           }
         }
       } else {
@@ -412,8 +412,10 @@ export default function CreateTab() {
                 selectedType === 'image'
                   ? `${Math.max(0, usage.limits.image - usage.dailyImages)} left today`
                   : selectedType === 'short'
-                    ? `${Math.max(0, usage.limits.short - usage.dailyShorts)} left today`
-                    : `${Math.max(0, usage.limits.long - usage.dailyLongVids)} left today`
+                    ? usage.isPro
+                      ? `${Math.max(0, usage.limits.short - usage.monthlyShorts)} left this month`
+                      : '🔒 Pro only'
+                    : 'N/A'
               ) : 'Loading...'}
               {' · '}{usage?.isPro ? 'Pro' : 'Free tier'}
             </span>
@@ -435,6 +437,31 @@ export default function CreateTab() {
             AI Generated
           </button>
           <p className="text-[11px] text-alu-text-tertiary mt-1.5">Toggle if this content was made with AI</p>
+        </div>
+      )}
+
+      {/* Video Quality (upload mode + video only) */}
+      {mode === 'upload' && file && !file.type.startsWith('image/') && (
+        <div className="mb-6">
+          <label className="text-xs font-semibold text-alu-text mb-2 block">Video Quality</label>
+          <div className="flex gap-2">
+            {['360p', '720p', '1080p', selectedType === 'video' && '4k'].filter(Boolean).map((quality) => (
+              <button
+                key={quality}
+                onClick={() => setVideoQuality(quality as typeof videoQuality)}
+                className={`flex-1 px-3 py-2 rounded-lg text-xs font-medium transition-all ${
+                  videoQuality === quality
+                    ? 'bg-[var(--alu-primary)] text-white'
+                    : 'bg-alu-surface text-alu-text-secondary hover:bg-alu-border'
+                }`}
+              >
+                {quality}
+              </button>
+            ))}
+          </div>
+          <p className="text-[11px] text-alu-text-tertiary mt-1.5">
+            {selectedType === 'video' ? 'Up to 4K for long videos' : 'Quality options for your video'}
+          </p>
         </div>
       )}
 

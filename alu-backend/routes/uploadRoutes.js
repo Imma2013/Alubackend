@@ -29,7 +29,7 @@ const upload = multer({
  */
 router.post('/', clerkAuth, upload.single('file'), async (req, res) => {
   const userId = req.auth.sub;
-  const { caption, mediaType, videoType, visibility, displayName, avatarUrl } = req.body;
+  const { caption, mediaType, videoType, visibility, displayName, avatarUrl, is_ai, quality } = req.body;
 
   if (!req.file) {
     return res.status(400).json({ error: 'No file uploaded' });
@@ -58,10 +58,20 @@ router.post('/', clerkAuth, upload.single('file'), async (req, res) => {
         public_id: `${userId}_${Date.now()}`,
       };
 
-      // For videos, generate a thumbnail via eager transform
+      // For videos, apply quality and generate thumbnail
       if (resourceType === 'video') {
+        // Map quality to Cloudinary height parameters
+        const qualityMap = {
+          '360p': 360,
+          '720p': 720,
+          '1080p': 1080,
+          '4k': 2160
+        };
+        const height = qualityMap[quality] || 360;
+
         options.eager = [
           { format: 'jpg', width: 400, height: 400, crop: 'thumb', gravity: 'auto' },
+          { format: 'mp4', height, quality: 'auto', crop: 'limit' }
         ];
         options.eager_async = false;
       }
@@ -81,7 +91,7 @@ router.post('/', clerkAuth, upload.single('file'), async (req, res) => {
       caption: caption || '',
       safePrompt: caption || 'User upload',
       originalPrompt: caption || '',
-      is_ai: false,
+      is_ai: is_ai === 'true' || is_ai === true,
       mediaType,
       videoType: mediaType === 'video' ? (videoType || 'short') : undefined,
       isLongForm: videoType === 'long',
