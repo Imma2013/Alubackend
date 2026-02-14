@@ -2,6 +2,27 @@ const express = require('express');
 const router = express.Router();
 const { Post, Comment, Notification } = require('../config/db');
 const clerkAuth = require('../middleware/clerkAuth');
+// GET all liked posts for current user
+router.get('/liked', clerkAuth, async (req, res) => {
+    try {
+        const userId = req.auth.sub;
+        const posts = await Post.find({ likedBy: userId })
+            .sort({ timestamp: -1 })
+            .limit(200);
+
+        const postsWithCounts = await Promise.all(
+            posts.map(async (post) => {
+                const commentCount = await Comment.countDocuments({ postId: post._id });
+                return { ...post.toObject(), commentsCount: commentCount };
+            })
+        );
+
+        res.json({ posts: postsWithCounts });
+    } catch (err) {
+        console.error('Get liked posts error:', err);
+        res.status(500).json({ error: 'Failed to fetch liked posts' });
+    }
+});
 
 // ─── GET single post by ID (public — for share links) ───
 router.get('/:id', async (req, res) => {
@@ -206,14 +227,22 @@ router.post('/:postId/comments/:commentId/like', clerkAuth, async (req, res) => 
     }
 });
 
-// ─── DELETE a comment (only by author) ───
+// ─── DELETE a comment (by comment author or post owner) ───
 router.delete('/:postId/comments/:commentId', clerkAuth, async (req, res) => {
     try {
         const userId = req.auth.sub;
+        const post = await Post.findById(req.params.postId);
+        if (!post) return res.status(404).json({ error: 'Post not found' });
+
         const comment = await Comment.findById(req.params.commentId);
         if (!comment) return res.status(404).json({ error: 'Comment not found' });
-        if (comment.userId !== userId) return res.status(403).json({ error: 'Not your comment' });
+        const isCommentOwner = comment.userId === userId;
+        const isPostOwner = post.userId === userId;
+        if (!isCommentOwner && !isPostOwner) {
+            return res.status(403).json({ error: 'Not authorized to delete this comment' });
+        }
 
+        await Comment.deleteMany({ parentCommentId: comment._id });
         await comment.deleteOne();
         res.json({ deleted: true });
     } catch (err) {
@@ -329,3 +358,4 @@ router.get('/favorites', clerkAuth, async (req, res) => {
 });
 
 module.exports = router;
+
