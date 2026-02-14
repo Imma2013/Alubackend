@@ -7,6 +7,8 @@ const UserSchema = new mongoose.Schema({
   avatarUrl: { type: String, default: '' },
   bio: { type: String, default: '' },
   dailyImages: { type: Number, default: 0 },
+  dailyShorts: { type: Number, default: 0 },
+  dailyLongVids: { type: Number, default: 0 },
   monthlyShorts: { type: Number, default: 0 },
   lastResetDate: { type: Date, default: Date.now },
   lastMonthlyResetDate: { type: Date, default: Date.now },
@@ -14,6 +16,7 @@ const UserSchema = new mongoose.Schema({
   subscriptionId: { type: String },
   stripeCustomerId: { type: String },
   bonusImages: { type: Number, default: 0 },
+  bonusShorts: { type: Number, default: 0 },
   followers: [{ type: String }],
   following: [{ type: String }],
 });
@@ -38,7 +41,7 @@ const PostSchema = new mongoose.Schema({
   status: { type: String, enum: ['ready', 'pending', 'failed'], default: 'ready' },
   displayName: { type: String, default: '' },
   avatarUrl: { type: String, default: '' },
-  images: [{ type: String }], // Array of image URLs for carousel posts (up to 5 images)
+  images: [{ type: String }], // Array of image URLs for carousel posts (up to 3 images)
 }, { timestamps: true });
 
 // Comment Schema
@@ -57,7 +60,7 @@ const CommentSchema = new mongoose.Schema({
 // Notification Schema
 const NotificationSchema = new mongoose.Schema({
   userId: { type: String, required: true, index: true }, // who receives this
-  type: { type: String, enum: ['like', 'comment', 'follow', 'comment_like', 'reply'], required: true },
+  type: { type: String, enum: ['like', 'comment', 'follow', 'comment_like', 'reply', 'new_post'], required: true },
   fromUserId: { type: String, required: true },
   fromDisplayName: { type: String, default: '' },
   fromAvatarUrl: { type: String, default: '' },
@@ -68,10 +71,30 @@ const NotificationSchema = new mongoose.Schema({
   read: { type: Boolean, default: false },
 }, { timestamps: true });
 
+// DM Thread Schema
+const DMThreadSchema = new mongoose.Schema({
+  participants: [{ type: String, required: true, index: true }],
+  createdBy: { type: String, required: true },
+  lastMessage: { type: String, default: '' },
+  lastMessageAt: { type: Date, default: Date.now, index: true },
+  unreadCounts: { type: Map, of: Number, default: {} }, // keyed by userId
+}, { timestamps: true });
+
+// DM Message Schema
+const DMMessageSchema = new mongoose.Schema({
+  threadId: { type: mongoose.Schema.Types.ObjectId, ref: 'DMThread', required: true, index: true },
+  senderId: { type: String, required: true, index: true },
+  text: { type: String, default: '', maxlength: 2000 },
+  imageUrl: { type: String, default: '' },
+  status: { type: String, enum: ['sent', 'seen'], default: 'sent' },
+}, { timestamps: true });
+
 const User = mongoose.model('User', UserSchema);
 const Post = mongoose.model('Post', PostSchema);
 const Comment = mongoose.model('Comment', CommentSchema);
 const Notification = mongoose.model('Notification', NotificationSchema);
+const DMThread = mongoose.model('DMThread', DMThreadSchema);
+const DMMessage = mongoose.model('DMMessage', DMMessageSchema);
 
 const connectDB = async () => {
   try {
@@ -98,4 +121,4 @@ const connectDB = async () => {
   }
 };
 
-module.exports = { connectDB, User, Post, Comment, Notification };
+module.exports = { connectDB, User, Post, Comment, Notification, DMThread, DMMessage };
