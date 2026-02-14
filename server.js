@@ -23,21 +23,6 @@ const clerkAuth = require('./middleware/clerkAuth');
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-const sanitizeDeep = (value) => {
-  if (Array.isArray(value)) {
-    return value.map(sanitizeDeep);
-  }
-  if (value && typeof value === 'object') {
-    const out = {};
-    for (const [rawKey, rawVal] of Object.entries(value)) {
-      const key = String(rawKey).replace(/\$/g, '_').replace(/\./g, '_');
-      out[key] = sanitizeDeep(rawVal);
-    }
-    return out;
-  }
-  return value;
-};
-
 // Middleware
 app.use((req, res, next) => {
   if (req.originalUrl === '/payments/webhook') {
@@ -49,18 +34,6 @@ app.use((req, res, next) => {
 app.use(cors());
 app.use(helmet());
 app.use(morgan('dev'));
-
-// MongoDB injection protection compatible with current Express runtime.
-app.use((req, res, next) => {
-  try {
-    if (req.body && typeof req.body === 'object') req.body = sanitizeDeep(req.body);
-    if (req.params && typeof req.params === 'object') req.params = sanitizeDeep(req.params);
-    // Avoid assigning to req.query because some runtimes expose it as getter-only.
-    next();
-  } catch (err) {
-    next(err);
-  }
-});
 
 // Global rate limiter - 100 requests per 15 minutes per IP
 const globalLimiter = rateLimit({
@@ -196,6 +169,10 @@ app.get('/', (req, res) => {
   res.send('Alu API is running with Conductor & CreditGuard');
 });
 
+app.get('/healthz', (req, res) => {
+  res.status(200).json({ ok: true });
+});
+
 // --- Short Video Stitching (up to 60s, 9:16 vertical) ---
 app.post('/generate/short-video', generateLimiter, clerkAuth, async (req, res) => {
   try {
@@ -277,6 +254,13 @@ app.get('/generate/status/:jobId', clerkAuth, async (req, res) => {
     error: job.error,
     postId: job.postId || null,
   });
+});
+
+// Global error handler: always return JSON and never default to HTML error pages.
+app.use((err, req, res, next) => {
+  console.error('Unhandled server error:', err);
+  if (res.headersSent) return next(err);
+  res.status(500).json({ error: 'Internal server error' });
 });
 
 const startServer = async () => {
