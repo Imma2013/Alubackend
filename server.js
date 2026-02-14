@@ -2,12 +2,13 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
+const rateLimit = require('express-rate-limit');
 require('dotenv').config();
 
 const { connectDB, Post, User } = require('./config/db');
 const initCreditGuard = require('./utils/creditGuard');
 const { generateContent } = require('./services/conductor');
-const { createJob, getJob } = require('./services/videoJobs');
+const { createJob, enqueueJob, getJob, startJobWorker, hasQueueRuntime } = require('./services/videoJobs');
 const { processVideoJob } = require('./services/videoStitcher');
 const paymentRoutes = require('./routes/paymentRoutes');
 const syncRoutes = require('./routes/syncRoutes');
@@ -15,10 +16,27 @@ const uploadRoutes = require('./routes/uploadRoutes');
 const userRoutes = require('./routes/userRoutes');
 const postRoutes = require('./routes/postRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
+const dmRoutes = require('./routes/dmRoutes');
+const storyRoutes = require('./routes/storyRoutes');
 const clerkAuth = require('./middleware/clerkAuth');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
+
+const sanitizeDeep = (value) => {
+  if (Array.isArray(value)) {
+    return value.map(sanitizeDeep);
+  }
+  if (value && typeof value === 'object') {
+    const out = {};
+    for (const [rawKey, rawVal] of Object.entries(value)) {
+      const key = String(rawKey).replace(/\$/g, '_').replace(/\./g, '_');
+      out[key] = sanitizeDeep(rawVal);
+    }
+    return out;
+  }
+  return value;
+};
 
 // Middleware
 app.use((req, res, next) => {
@@ -32,32 +50,56 @@ app.use(cors());
 app.use(helmet());
 app.use(morgan('dev'));
 
-// Simple rate limiter for uploads (10 req/min per IP)
-const uploadRateLimit = new Map();
-const rateLimitUpload = (req, res, next) => {
-  const ip = req.ip;
-  const now = Date.now();
-  const windowMs = 60000;
-  const maxRequests = 10;
-  const requests = (uploadRateLimit.get(ip) || []).filter(t => now - t < windowMs);
-  if (requests.length >= maxRequests) {
-    return res.status(429).json({ error: 'Too many uploads. Please try again later.' });
+// MongoDB injection protection compatible with current Express runtime.
+app.use((req, res, next) => {
+  try {
+    if (req.body && typeof req.body === 'object') req.body = sanitizeDeep(req.body);
+    if (req.params && typeof req.params === 'object') req.params = sanitizeDeep(req.params);
+    // Avoid assigning to req.query because some runtimes expose it as getter-only.
+    next();
+  } catch (err) {
+    next(err);
   }
-  requests.push(now);
-  uploadRateLimit.set(ip, requests);
-  next();
-};
+});
+
+// Global rate limiter - 100 requests per 15 minutes per IP
+const globalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // Max 100 requests per windowMs
+  message: 'Too many requests from this IP, please try again later.',
+  standardHeaders: true, // Return rate limit info in `RateLimit-*` headers
+  legacyHeaders: false, // Disable `X-RateLimit-*` headers
+});
+
+// Stricter rate limiter for uploads - 10 req/min per IP
+const uploadLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 10,
+  message: 'Too many uploads. Please try again later.',
+});
+
+// Stricter rate limiter for AI generation - 20 req/hour per IP
+const generateLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 20,
+  message: 'Too many AI generation requests. Please try again later.',
+});
+
+// Apply global rate limiter to all routes
+app.use(globalLimiter);
 
 // Routes
 app.use('/payments', paymentRoutes);
 app.use('/sync', syncRoutes);
-app.use('/upload', rateLimitUpload, uploadRoutes);
+app.use('/upload', uploadLimiter, uploadRoutes);
 app.use('/users', userRoutes);
 app.use('/posts', postRoutes);
 app.use('/notifications', notificationRoutes);
+app.use('/dm', dmRoutes);
+app.use('/stories', storyRoutes);
 
 // This route is now protected. A valid Clerk token is required.
-app.post('/generate', clerkAuth, async (req, res) => {
+app.post('/generate', generateLimiter, clerkAuth, async (req, res) => {
   const userId = req.auth.sub;
   const { prompt, type, isLongVideo, visibility, displayName, avatarUrl } = req.body;
 
@@ -77,19 +119,41 @@ app.post('/generate', clerkAuth, async (req, res) => {
   }
 });
 
-// Usage endpoint — returns real daily counts
+// Usage endpoint — returns real daily counts + bonus credits
 app.get('/usage', clerkAuth, async (req, res) => {
   try {
     const userId = req.auth.sub;
-    let user = await User.findOne({ userId });
-    if (!user) {
-      user = await User.create({ userId });
+    let user = await User.findOneAndUpdate(
+      { userId },
+      { $setOnInsert: { userId } },
+      { upsert: true, new: true }
+    );
+    const now = Date.now();
+    const weekMs = 7 * 24 * 60 * 60 * 1000;
+    const lastShortReset = new Date(user.lastShortResetDate || user.lastResetDate || 0).getTime();
+    if (now - lastShortReset >= weekMs) {
+      user.dailyShorts = 0;
+      user.lastShortResetDate = new Date(now);
+      await user.save();
     }
+
+    const shortLimit = 1; // one short per week
+    const imageLimit = 3; // three images per day
+    const bonusImages = user.bonusImages || 0;
+    const bonusShorts = user.bonusShorts || 0;
+    const remainingImages = Math.max(0, imageLimit - (user.dailyImages || 0)) + bonusImages;
+    const remainingShorts = Math.max(0, shortLimit - (user.dailyShorts || 0)) + bonusShorts;
     res.json({
       dailyImages: user.dailyImages || 0,
       dailyShorts: user.dailyShorts || 0,
-      dailyLongVids: user.dailyLongVids || 0,
-      limits: { image: 3, short: 2, long: 1 },
+      bonusImages,
+      bonusShorts,
+      remainingImages,
+      remainingShorts,
+      limits: {
+        image: imageLimit,
+        short: shortLimit,
+      },
       isPro: user.isPro || false,
     });
   } catch (error) {
@@ -111,7 +175,17 @@ app.get('/feed', async (req, res) => {
     if (media === 'video') filter.mediaType = 'video';
 
     const posts = await Post.find(filter).sort({ timestamp: -1 }).limit(50);
-    res.json(posts);
+
+    // Add comment counts to each post
+    const { Comment } = require('./config/db');
+    const postsWithCounts = await Promise.all(
+      posts.map(async (post) => {
+        const commentCount = await Comment.countDocuments({ postId: post._id });
+        return { ...post.toObject(), commentsCount: commentCount };
+      })
+    );
+
+    res.json(postsWithCounts);
   } catch (error) {
     console.error('Feed Error:', error);
     res.status(500).json({ error: 'Failed to fetch feed' });
@@ -122,47 +196,8 @@ app.get('/', (req, res) => {
   res.send('Alu API is running with Conductor & CreditGuard');
 });
 
-// --- Long Video Stitching ---
-app.post('/generate/long-video', clerkAuth, async (req, res) => {
-  try {
-    const userId = req.auth.sub;
-    const { prompt, durationSeconds, visibility, displayName, avatarUrl } = req.body;
-
-    if (!prompt) {
-      return res.status(400).json({ error: 'Missing prompt' });
-    }
-
-    const duration = Math.min(Math.max(durationSeconds || 300, 30), 600); // 30s - 10min
-
-    // Check daily limit
-    let user = await User.findOne({ userId });
-    if (!user) user = await User.create({ userId, displayName, avatarUrl });
-    if (user.dailyLongVids >= 1 && !user.isPro) {
-      return res.status(429).json({ error: 'Daily long video limit reached. Upgrade to Pro for more.' });
-    }
-
-    // Create job with options
-    const job = createJob(userId, prompt, duration, visibility || 'everyone', {
-      aspectRatio: '16:9',
-      videoType: 'long',
-      displayName: displayName || '',
-      avatarUrl: avatarUrl || '',
-    });
-
-    // Start processing in background (fire and forget)
-    processVideoJob(job).catch(err => {
-      console.error(`Background video job ${job.jobId} error:`, err);
-    });
-
-    res.status(202).json({ jobId: job.jobId, status: 'queued' });
-  } catch (error) {
-    console.error('Long Video Error:', error);
-    res.status(500).json({ error: 'Failed to start video generation' });
-  }
-});
-
 // --- Short Video Stitching (up to 60s, 9:16 vertical) ---
-app.post('/generate/short-video', clerkAuth, async (req, res) => {
+app.post('/generate/short-video', generateLimiter, clerkAuth, async (req, res) => {
   try {
     const userId = req.auth.sub;
     const { prompt, durationSeconds, visibility, displayName, avatarUrl } = req.body;
@@ -173,25 +208,44 @@ app.post('/generate/short-video', clerkAuth, async (req, res) => {
 
     const duration = Math.min(Math.max(durationSeconds || 60, 8), 60); // 8s - 60s
 
-    // Check daily limit
+    // Check weekly shorts limit
     let user = await User.findOne({ userId });
     if (!user) user = await User.create({ userId, displayName, avatarUrl });
-    if (user.dailyShorts >= 2 && !user.isPro) {
-      return res.status(429).json({ error: 'Daily shorts limit reached. Upgrade to Pro for more.' });
+    const now = Date.now();
+    const weekMs = 7 * 24 * 60 * 60 * 1000;
+    const lastShortReset = new Date(user.lastShortResetDate || user.lastResetDate || 0).getTime();
+    if (now - lastShortReset >= weekMs) {
+      user.dailyShorts = 0;
+      user.lastShortResetDate = new Date(now);
+      await user.save();
+    }
+
+    const shortLimit = 1;
+    let useBonusShort = false;
+    if ((user.dailyShorts || 0) >= shortLimit) {
+      if ((user.bonusShorts || 0) > 0) {
+        useBonusShort = true;
+      } else {
+        return res.status(429).json({ error: `Weekly shorts limit reached (${shortLimit}/week).` });
+      }
     }
 
     // Create job with 9:16 aspect ratio for shorts
-    const job = createJob(userId, prompt, duration, visibility || 'everyone', {
+    const job = await createJob(userId, prompt, duration, visibility || 'everyone', {
       aspectRatio: '9:16',
       videoType: 'short',
+      useBonusShort,
       displayName: displayName || '',
       avatarUrl: avatarUrl || '',
     });
 
-    // Start processing in background (fire and forget)
-    processVideoJob(job).catch(err => {
-      console.error(`Background short video job ${job.jobId} error:`, err);
-    });
+    const queued = await enqueueJob(job.jobId);
+    if (!queued) {
+      // Fallback mode if Redis/BullMQ not configured
+      processVideoJob(job).catch(err => {
+        console.error(`Background short video job ${job.jobId} error:`, err);
+      });
+    }
 
     res.status(202).json({ jobId: job.jobId, status: 'queued' });
   } catch (error) {
@@ -201,7 +255,7 @@ app.post('/generate/short-video', clerkAuth, async (req, res) => {
 });
 
 app.get('/generate/status/:jobId', clerkAuth, async (req, res) => {
-  const job = getJob(req.params.jobId);
+  const job = await getJob(req.params.jobId);
   if (!job) {
     return res.status(404).json({ error: 'Job not found' });
   }
@@ -228,6 +282,10 @@ app.get('/generate/status/:jobId', clerkAuth, async (req, res) => {
 const startServer = async () => {
   try {
     await connectDB();
+    startJobWorker();
+    if (hasQueueRuntime()) {
+      console.log('Video queue enabled: BullMQ + Redis');
+    }
     initCreditGuard();
     app.listen(PORT, () => {
       console.log(`🚀 Server running on port ${PORT}`);
