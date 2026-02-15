@@ -33,12 +33,13 @@ cloudinary.config({
 });
 
 const CLIP_DURATION = 8; // seconds per clip
-const MAX_PARALLEL_CLIPS = 3; // rate limiting for API
+const MAX_PARALLEL_CLIPS = Number(process.env.VIDEO_MAX_PARALLEL_CLIPS || 1); // safer default for quota
 const MAX_POLL_ATTEMPTS = 60; // 5 min per clip
 
 // Sora 2 config from env
 const SORA_API_URL = process.env.THIRD_PARTY_API_URL;
 const SORA_API_KEY = process.env.THIRD_PARTY_API_KEY;
+const ENABLE_SORA_FALLBACK = String(process.env.ENABLE_SORA_FALLBACK || 'false').toLowerCase() === 'true';
 
 /**
  * Split a prompt into multiple scene descriptions using Gemini Flash
@@ -83,11 +84,12 @@ Video concept: ${prompt}`;
 }
 
 /**
- * Generate a single video clip — tries Sora 2 (piapi.ai) first, falls back to Veo 3.1
+ * Generate a single video clip.
+ * Default: Veo only (stable path).
+ * Optional: Sora fallback only if ENABLE_SORA_FALLBACK=true.
  */
 async function generateClip(scenePrompt, aspectRatio = '16:9') {
-    // Try Sora 2 first (storyboard mode via piapi.ai)
-    if (SORA_API_URL && SORA_API_KEY) {
+    if (ENABLE_SORA_FALLBACK && SORA_API_URL && SORA_API_KEY) {
         try {
             const soraResult = await generateClipViaSora(scenePrompt, aspectRatio);
             if (soraResult) return soraResult;
@@ -96,7 +98,7 @@ async function generateClip(scenePrompt, aspectRatio = '16:9') {
         }
     }
 
-    // Fallback: Veo 3.1
+    // Primary: Veo 3.1
     return await generateClipViaVeo(scenePrompt, aspectRatio);
 }
 
@@ -253,9 +255,9 @@ async function generateClipsInBatches(scenes, jobId, job) {
             });
         }
 
-        // Brief pause between batches to avoid rate limiting
+        // Pause between batches to avoid rate limiting
         if (i + MAX_PARALLEL_CLIPS < scenes.length) {
-            await new Promise(resolve => setTimeout(resolve, 2000));
+            await new Promise(resolve => setTimeout(resolve, 3500));
         }
     }
 
@@ -355,7 +357,8 @@ async function processVideoJob(job) {
             throw new Error('No clips were successfully generated');
         }
 
-        if (clipPaths.length < Math.floor(numClips * 0.5)) {
+        const minRequiredClips = Math.max(2, Math.ceil(numClips * 0.3));
+        if (clipPaths.length < minRequiredClips) {
             throw new Error(`Only ${clipPaths.length}/${numClips} clips generated. Too many failures.`);
         }
 

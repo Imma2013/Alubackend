@@ -192,7 +192,8 @@ app.post('/generate/short-video', generateLimiter, clerkAuth, async (req, res) =
       return res.status(400).json({ error: 'Missing prompt' });
     }
 
-    const duration = Math.min(Math.max(durationSeconds || 60, 8), 60); // 8s - 60s
+    const maxShortSeconds = Number(process.env.SHORT_VIDEO_MAX_SECONDS || 32);
+    const duration = Math.min(Math.max(durationSeconds || 60, 8), Math.max(8, maxShortSeconds));
 
     // Check weekly shorts limit
     let user = await User.findOne({ userId });
