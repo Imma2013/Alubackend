@@ -22,6 +22,7 @@ const clerkAuth = require('./middleware/clerkAuth');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
+app.set('trust proxy', 1);
 
 // Middleware
 app.use((req, res, next) => {
@@ -35,27 +36,35 @@ app.use(cors());
 app.use(helmet());
 app.use(morgan('dev'));
 
-// Global rate limiter - 100 requests per 15 minutes per IP
+const limiterHandler = (friendly) => (req, res) => {
+  res.status(429).json({ error: friendly });
+};
+
+// Global limiter: high enough for polling/streaming/chat traffic.
 const globalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // Max 100 requests per windowMs
-  message: 'Too many requests from this IP, please try again later.',
-  standardHeaders: true, // Return rate limit info in `RateLimit-*` headers
-  legacyHeaders: false, // Disable `X-RateLimit-*` headers
+  max: Number(process.env.GLOBAL_RATE_LIMIT_MAX || 1000),
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: limiterHandler('Too many requests from this IP, please try again later.'),
 });
 
-// Stricter rate limiter for uploads - 10 req/min per IP
+// Upload limiter: still strict
 const uploadLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
-  max: 10,
-  message: 'Too many uploads. Please try again later.',
+  max: Number(process.env.UPLOAD_RATE_LIMIT_MAX || 20),
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: limiterHandler('Too many uploads. Please try again later.'),
 });
 
-// Stricter rate limiter for AI generation - 20 req/hour per IP
+// AI generation limiter (cost guard)
 const generateLimiter = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 hour
-  max: 20,
-  message: 'Too many AI generation requests. Please try again later.',
+  max: Number(process.env.GENERATE_RATE_LIMIT_MAX || 40),
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: limiterHandler('Too many AI generation requests from this IP, please try again later.'),
 });
 
 // Apply global rate limiter to all routes
