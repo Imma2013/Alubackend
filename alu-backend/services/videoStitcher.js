@@ -40,6 +40,13 @@ const MAX_POLL_ATTEMPTS = 60; // 5 min per clip
 const SORA_API_URL = process.env.THIRD_PARTY_API_URL;
 const SORA_API_KEY = process.env.THIRD_PARTY_API_KEY;
 const ENABLE_SORA_FALLBACK = String(process.env.ENABLE_SORA_FALLBACK || 'false').toLowerCase() === 'true';
+const SCENE_MODEL_CANDIDATES = [
+    process.env.GEMINI_SCENE_MODEL,
+    process.env.GEMINI_TEXT_MODEL,
+    'gemini-2.5-flash-lite',
+    'gemini-2.5-flash',
+    'gemini-3-flash-preview',
+].filter(Boolean);
 
 /**
  * Split a prompt into multiple scene descriptions using Gemini Flash
@@ -54,10 +61,21 @@ Example format: ["A sunrise over mountains with golden light streaming through c
 Video concept: ${prompt}`;
 
     try {
-        const response = await ai.models.generateContent({
-            model: 'gemini-3-flash',
-            contents: instruction,
-        });
+        let response = null;
+        let lastError = null;
+        for (const model of SCENE_MODEL_CANDIDATES) {
+            try {
+                response = await ai.models.generateContent({
+                    model,
+                    contents: instruction,
+                });
+                break;
+            } catch (err) {
+                lastError = err;
+                console.warn(`Scene model ${model} failed:`, err.message);
+            }
+        }
+        if (!response) throw lastError || new Error('No available scene model.');
 
         const text = response.text.trim();
         // Extract JSON array from response (handle code blocks)

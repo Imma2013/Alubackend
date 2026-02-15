@@ -185,6 +185,11 @@ app.get('/healthz', (req, res) => {
 // --- Short Video Stitching (up to 60s, 9:16 vertical) ---
 app.post('/generate/short-video', generateLimiter, clerkAuth, async (req, res) => {
   try {
+    const shortsEnabled = String(process.env.SHORTS_GENERATION_ENABLED || 'true').toLowerCase() === 'true';
+    if (!shortsEnabled) {
+      return res.status(410).json({ error: 'Short generation is temporarily disabled.' });
+    }
+
     const userId = req.auth.sub;
     const { prompt, durationSeconds, visibility, displayName, avatarUrl } = req.body;
 
