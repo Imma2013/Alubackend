@@ -11,6 +11,7 @@ const UserSchema = new mongoose.Schema({
   dailyLongVids: { type: Number, default: 0 },
   monthlyShorts: { type: Number, default: 0 },
   lastResetDate: { type: Date, default: Date.now },
+  lastShortResetDate: { type: Date, default: Date.now },
   lastMonthlyResetDate: { type: Date, default: Date.now },
   isPro: { type: Boolean, default: false },
   subscriptionId: { type: String },

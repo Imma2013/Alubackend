@@ -4,18 +4,28 @@ const Stripe = require('stripe');
 const { User } = require('../config/db');
 const clerkAuth = require('../middleware/clerkAuth');
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+let stripe = null;
+const getStripe = () => {
+  if (!process.env.STRIPE_SECRET_KEY) return null;
+  if (!stripe) {
+    stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+  }
+  return stripe;
+};
 
-// Credit pack amounts for one-time purchase
-const CREDIT_PACK = {
-  bonusImages: 50,
+// Credit amounts for one-time purchases
+const IMAGE_CREDIT_PACK = {
+  bonusImages: Number(process.env.CREDIT_PACK_IMAGES || 30),
+};
+const SHORT_CREDIT_PACK = {
+  bonusShorts: Number(process.env.CREDIT_PACK_SHORTS || 1),
 };
 
 /**
  * POST /create-checkout-session
  * Creates a Stripe Checkout Session.
- * Body: { userId, priceId, mode }
- *   mode: 'subscription' (Pro monthly) or 'payment' (one-time credit pack)
+ * Body: { priceId, mode }
+ *   mode: 'subscription' (Pro monthly), 'payment' (image credits), or 'short' (short credits)
  */
 router.post('/create-checkout-session', clerkAuth, async (req, res) => {
   const userId = req.auth.sub;
@@ -24,11 +34,28 @@ router.post('/create-checkout-session', clerkAuth, async (req, res) => {
   if (!priceId) {
     return res.status(400).json({ error: 'Missing priceId' });
   }
+  if (!String(priceId).startsWith('price_')) {
+    return res.status(400).json({ error: 'Invalid Stripe priceId. Use a price_... ID, not a product ID.' });
+  }
+  const stripeClient = getStripe();
+  if (!stripeClient) {
+    return res.status(503).json({ error: 'Payments unavailable: STRIPE_SECRET_KEY is missing on backend.' });
+  }
 
-  const checkoutMode = mode === 'payment' ? 'payment' : 'subscription';
+  const purchaseType = mode === 'short'
+    ? 'short_credit'
+    : (mode === 'payment' ? 'image_credit' : 'subscription');
+  const checkoutMode = purchaseType === 'subscription' ? 'subscription' : 'payment';
+  const expectedPriceId = purchaseType === 'subscription'
+    ? process.env.STRIPE_PRO_PRICE_ID
+    : (purchaseType === 'short_credit' ? process.env.STRIPE_SHORT_PRICE_ID : process.env.STRIPE_IMAGE_PRICE_ID);
+
+  if (expectedPriceId && expectedPriceId !== priceId) {
+    return res.status(400).json({ error: 'Invalid priceId for selected purchase mode.' });
+  }
 
   try {
-    const session = await stripe.checkout.sessions.create({
+    const session = await stripeClient.checkout.sessions.create({
       payment_method_types: ['card'],
       line_items: [
         {
@@ -42,7 +69,7 @@ router.post('/create-checkout-session', clerkAuth, async (req, res) => {
       client_reference_id: userId,
       metadata: {
         userId: userId,
-        purchaseType: checkoutMode,
+        purchaseType,
       }
     });
 
@@ -58,11 +85,15 @@ router.post('/create-checkout-session', clerkAuth, async (req, res) => {
  * Handles Stripe webhooks to fulfill orders/subscriptions.
  */
 router.post('/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
+  const stripeClient = getStripe();
+  if (!stripeClient) {
+    return res.status(503).send('Payments unavailable');
+  }
   const sig = req.headers['stripe-signature'];
   let event;
 
   try {
-    event = stripe.webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET);
+    event = stripeClient.webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET);
   } catch (err) {
     console.error('Webhook signature verification failed.', err.message);
     return res.status(400).send(`Webhook Error: ${err.message}`);
@@ -84,19 +115,32 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
           { upsert: true }
         );
         console.log(`User ${userId} upgraded to Pro`);
-      } else {
-        // One-time credit pack — add bonus credits
+      } else if (purchaseType === 'short_credit') {
+        // One-time short credit pack
         await User.findOneAndUpdate(
           { userId },
           {
             $inc: {
-              bonusImages: CREDIT_PACK.bonusImages,
+              bonusShorts: SHORT_CREDIT_PACK.bonusShorts,
             },
             stripeCustomerId: session.customer,
           },
           { upsert: true }
         );
-        console.log(`User ${userId} received credit pack: +${CREDIT_PACK.bonusImages} images`);
+        console.log(`User ${userId} received short credit pack: +${SHORT_CREDIT_PACK.bonusShorts} shorts`);
+      } else {
+        // One-time image credit pack
+        await User.findOneAndUpdate(
+          { userId },
+          {
+            $inc: {
+              bonusImages: IMAGE_CREDIT_PACK.bonusImages,
+            },
+            stripeCustomerId: session.customer,
+          },
+          { upsert: true }
+        );
+        console.log(`User ${userId} received image credit pack: +${IMAGE_CREDIT_PACK.bonusImages} images`);
       }
       break;
     }

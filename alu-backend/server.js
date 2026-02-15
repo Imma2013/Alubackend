@@ -2,7 +2,6 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
-const mongoSanitize = require('express-mongo-sanitize');
 const rateLimit = require('express-rate-limit');
 require('dotenv').config();
 
@@ -35,14 +34,6 @@ app.use((req, res, next) => {
 app.use(cors());
 app.use(helmet());
 app.use(morgan('dev'));
-
-// MongoDB injection protection - sanitize req.body, req.query, req.params
-app.use(mongoSanitize({
-  replaceWith: '_', // Replace $ and . with _ instead of removing
-  onSanitize: ({ req, key }) => {
-    console.warn(`Sanitized suspicious key: ${key} from ${req.ip}`);
-  },
-}));
 
 // Global rate limiter - 100 requests per 15 minutes per IP
 const globalLimiter = rateLimit({
@@ -110,8 +101,17 @@ app.get('/usage', clerkAuth, async (req, res) => {
       { $setOnInsert: { userId } },
       { upsert: true, new: true }
     );
-    const shortLimit = user.isPro ? 5 : 1;
-    const imageLimit = user.isPro ? 30 : 3;
+    const now = Date.now();
+    const weekMs = 7 * 24 * 60 * 60 * 1000;
+    const lastShortReset = new Date(user.lastShortResetDate || user.lastResetDate || 0).getTime();
+    if (now - lastShortReset >= weekMs) {
+      user.dailyShorts = 0;
+      user.lastShortResetDate = new Date(now);
+      await user.save();
+    }
+
+    const shortLimit = 1; // one short per week
+    const imageLimit = 3; // three images per day
     const bonusImages = user.bonusImages || 0;
     const bonusShorts = user.bonusShorts || 0;
     const remainingImages = Math.max(0, imageLimit - (user.dailyImages || 0)) + bonusImages;
@@ -169,6 +169,10 @@ app.get('/', (req, res) => {
   res.send('Alu API is running with Conductor & CreditGuard');
 });
 
+app.get('/healthz', (req, res) => {
+  res.status(200).json({ ok: true });
+});
+
 // --- Short Video Stitching (up to 60s, 9:16 vertical) ---
 app.post('/generate/short-video', generateLimiter, clerkAuth, async (req, res) => {
   try {
@@ -181,16 +185,25 @@ app.post('/generate/short-video', generateLimiter, clerkAuth, async (req, res) =
 
     const duration = Math.min(Math.max(durationSeconds || 60, 8), 60); // 8s - 60s
 
-    // Check daily shorts limit
+    // Check weekly shorts limit
     let user = await User.findOne({ userId });
     if (!user) user = await User.create({ userId, displayName, avatarUrl });
-    const shortLimit = user.isPro ? 5 : 1;
+    const now = Date.now();
+    const weekMs = 7 * 24 * 60 * 60 * 1000;
+    const lastShortReset = new Date(user.lastShortResetDate || user.lastResetDate || 0).getTime();
+    if (now - lastShortReset >= weekMs) {
+      user.dailyShorts = 0;
+      user.lastShortResetDate = new Date(now);
+      await user.save();
+    }
+
+    const shortLimit = 1;
     let useBonusShort = false;
     if ((user.dailyShorts || 0) >= shortLimit) {
       if ((user.bonusShorts || 0) > 0) {
         useBonusShort = true;
       } else {
-        return res.status(429).json({ error: `Daily shorts limit reached (${shortLimit}/day).` });
+        return res.status(429).json({ error: `Weekly shorts limit reached (${shortLimit}/week).` });
       }
     }
 
@@ -241,6 +254,13 @@ app.get('/generate/status/:jobId', clerkAuth, async (req, res) => {
     error: job.error,
     postId: job.postId || null,
   });
+});
+
+// Global error handler: always return JSON and never default to HTML error pages.
+app.use((err, req, res, next) => {
+  console.error('Unhandled server error:', err);
+  if (res.headersSent) return next(err);
+  res.status(500).json({ error: 'Internal server error' });
 });
 
 const startServer = async () => {

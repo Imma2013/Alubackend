@@ -15,10 +15,19 @@ const initCreditGuard = () => {
       for (const user of users) {
         const updates = {};
 
-        // Daily reset: images only
+        // Daily reset: daily limits
         updates.dailyImages = 0;
+        updates.dailyLongVids = 0;
         updates.lastResetDate = now;
         dailyResetCount++;
+
+        // Weekly reset: shorts limit
+        const lastShortReset = user.lastShortResetDate || user.lastResetDate || new Date(0);
+        const weekMs = 7 * 24 * 60 * 60 * 1000;
+        if (now.getTime() - new Date(lastShortReset).getTime() >= weekMs) {
+          updates.dailyShorts = 0;
+          updates.lastShortResetDate = now;
+        }
 
         // Monthly reset: check if month changed
         const lastMonthlyReset = user.lastMonthlyResetDate || new Date(0);
