@@ -126,6 +126,39 @@ router.get('/search', async (req, res) => {
 });
 
 /**
+ * POST /users/me/sync
+ * Ensure signed-in user exists in backend directory so search/DM always works.
+ */
+router.post('/me/sync', clerkAuth, async (req, res) => {
+    try {
+        const userId = req.auth.sub;
+        if (!userId) return res.status(400).json({ error: 'Invalid auth user' });
+
+        let user = await User.findOne(
+            { userId },
+            { userId: 1, displayName: 1, avatarUrl: 1, bio: 1, _id: 0 }
+        );
+
+        if (!user) {
+            user = await User.create({ userId });
+        }
+
+        res.json({
+            ok: true,
+            user: {
+                userId: user.userId,
+                displayName: user.displayName || '',
+                avatarUrl: user.avatarUrl || '',
+                bio: user.bio || '',
+            },
+        });
+    } catch (error) {
+        console.error('User sync error:', error);
+        res.status(500).json({ error: 'User sync failed' });
+    }
+});
+
+/**
  * GET /users/:userId
  * Get a user's public profile (display info + post counts + follower counts)
  */
