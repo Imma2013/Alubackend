@@ -8,10 +8,29 @@ const toDisplayName = (claims) => {
   const last = String(claims?.last_name || '').trim();
   const full = `${first} ${last}`.trim();
   if (full) return full;
-  const username = String(claims?.username || '').trim();
+  const username = String(claims?.username || claims?.preferred_username || '').trim();
   if (username) return username;
-  const email = Array.isArray(claims?.email_addresses) ? claims.email_addresses[0] : '';
-  return String(email || '').trim();
+  const primaryEmail = String(claims?.email || claims?.email_address || '').trim();
+  if (primaryEmail) return primaryEmail;
+  const emails = Array.isArray(claims?.email_addresses) ? claims.email_addresses : [];
+  const firstEmailObj = emails[0];
+  if (typeof firstEmailObj === 'string') return String(firstEmailObj || '').trim();
+  return String(firstEmailObj?.email_address || '').trim();
+};
+
+const toAvatarUrl = (claims) => {
+  const candidates = [
+    claims?.image_url,
+    claims?.picture,
+    claims?.imageUrl,
+    claims?.avatar_url,
+    claims?.profile_image_url,
+  ];
+  for (const value of candidates) {
+    const url = String(value || '').trim();
+    if (url) return url;
+  }
+  return '';
 };
 
 const clerkAuth = async (req, res, next) => {
@@ -37,7 +56,7 @@ const clerkAuth = async (req, res, next) => {
       const userId = claims.sub;
       if (userId) {
         const displayName = toDisplayName(claims);
-        const avatarUrl = String(claims?.image_url || '').trim();
+        const avatarUrl = toAvatarUrl(claims);
         const setFields = {};
         if (displayName) setFields.displayName = displayName;
         if (avatarUrl) setFields.avatarUrl = avatarUrl;

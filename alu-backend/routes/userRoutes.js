@@ -4,6 +4,24 @@ const { User, Post, Notification } = require('../config/db');
 
 const router = express.Router();
 
+const getLatestPostIdentity = async (userId) => {
+    const latest = await Post.findOne(
+        {
+            userId,
+            $or: [
+                { displayName: { $exists: true, $ne: '' } },
+                { avatarUrl: { $exists: true, $ne: '' } },
+            ],
+        },
+        { displayName: 1, avatarUrl: 1, _id: 0 }
+    ).sort({ createdAt: -1 });
+
+    return {
+        displayName: latest?.displayName || '',
+        avatarUrl: latest?.avatarUrl || '',
+    };
+};
+
 /**
  * GET /users/search?q=name
  * Search users by displayName (case-insensitive regex)
@@ -21,7 +39,12 @@ router.get('/search', async (req, res) => {
         const pattern = new RegExp(escaped, 'i');
 
         const users = await User.find(
-            { displayName: { $regex: escaped, $options: 'i' } },
+            {
+                $or: [
+                    { displayName: { $regex: escaped, $options: 'i' } },
+                    { userId: { $regex: escaped, $options: 'i' } },
+                ],
+            },
             { userId: 1, displayName: 1, avatarUrl: 1, bio: 1, _id: 0 }
         ).limit(20);
 
@@ -59,7 +82,17 @@ router.get('/search', async (req, res) => {
 
         for (const a of postAuthors) {
             const userId = String(a._id || '');
-            if (!userId || merged.has(userId)) continue;
+            if (!userId) continue;
+            if (merged.has(userId)) {
+                const existing = merged.get(userId);
+                merged.set(userId, {
+                    ...existing,
+                    displayName: existing.displayName || a.displayName || userId,
+                    avatarUrl: existing.avatarUrl || a.avatarUrl || '',
+                });
+                continue;
+            }
+
             merged.set(userId, {
                 userId,
                 displayName: a.displayName || userId,
@@ -110,6 +143,17 @@ router.get('/:userId', async (req, res) => {
         }
 
         // Count their public posts
+        const latestIdentity = await getLatestPostIdentity(userId);
+        const finalDisplayName = user.displayName || latestIdentity.displayName || user.userId;
+        const finalAvatarUrl = user.avatarUrl || latestIdentity.avatarUrl || '';
+
+        if (finalDisplayName !== user.displayName || finalAvatarUrl !== user.avatarUrl) {
+            await User.updateOne(
+                { userId },
+                { $set: { displayName: finalDisplayName, avatarUrl: finalAvatarUrl } }
+            );
+        }
+
         const [posts, shorts, videos] = await Promise.all([
             Post.countDocuments({ userId, mediaType: 'image', visibility: 'everyone' }),
             Post.countDocuments({ userId, mediaType: 'video', videoType: 'short', visibility: 'everyone' }),
@@ -118,8 +162,8 @@ router.get('/:userId', async (req, res) => {
 
         res.json({
             userId: user.userId,
-            displayName: user.displayName,
-            avatarUrl: user.avatarUrl,
+            displayName: finalDisplayName,
+            avatarUrl: finalAvatarUrl,
             bio: user.bio,
             isPro: user.isPro,
             followersCount: user.followers?.length || 0,

@@ -1,6 +1,6 @@
 const express = require('express');
 const clerkAuth = require('../middleware/clerkAuth');
-const { DMThread, DMMessage, User } = require('../config/db');
+const { DMThread, DMMessage, User, Post } = require('../config/db');
 
 const router = express.Router();
 const dmSubscribers = new Map(); // userId -> Set<response>
@@ -22,18 +22,39 @@ const emitDmEvent = (userIds, payload) => {
   }
 };
 
+const getFallbackIdentityFromPosts = async (userId) => {
+  const latest = await Post.findOne(
+    {
+      userId,
+      $or: [
+        { displayName: { $exists: true, $ne: '' } },
+        { avatarUrl: { $exists: true, $ne: '' } },
+      ],
+    },
+    { displayName: 1, avatarUrl: 1, _id: 0 }
+  ).sort({ createdAt: -1 });
+
+  return {
+    displayName: latest?.displayName || '',
+    avatarUrl: latest?.avatarUrl || '',
+  };
+};
+
 const toThreadResponse = async (thread, currentUserId) => {
   const participantId = thread.participants.find((id) => id !== currentUserId) || currentUserId;
   const participant = await User.findOne(
     { userId: participantId },
     { userId: 1, displayName: 1, avatarUrl: 1, _id: 0 }
   );
+  const fallback = await getFallbackIdentityFromPosts(participantId);
+  const participantName = participant?.displayName || fallback.displayName || 'Alu User';
+  const participantAvatar = participant?.avatarUrl || fallback.avatarUrl || '';
 
   return {
     _id: thread._id.toString(),
     participantId,
-    participantName: participant?.displayName || 'Alu User',
-    participantAvatar: participant?.avatarUrl || '',
+    participantName,
+    participantAvatar,
     lastMessage: thread.lastMessage || '',
     lastMessageAt: thread.lastMessageAt,
     unreadCount: Number(thread.unreadCounts?.get(currentUserId) || 0),
