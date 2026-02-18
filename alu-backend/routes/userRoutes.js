@@ -1,8 +1,18 @@
 const express = require('express');
+const multer = require('multer');
 const clerkAuth = require('../middleware/clerkAuth');
 const { User, Post, Comment, Notification } = require('../config/db');
+const { extFromMime, buildKey, uploadBuffer } = require('../services/storj');
 
 const router = express.Router();
+const avatarUpload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 10 * 1024 * 1024 },
+    fileFilter: (req, file, cb) => {
+        const ok = ['image/jpeg', 'image/png', 'image/webp'].includes(file.mimetype);
+        cb(ok ? null : new Error('Invalid avatar type'), ok);
+    },
+});
 
 const getLatestPostIdentity = async (userId) => {
     const latest = await Post.findOne(
@@ -239,6 +249,62 @@ router.post('/me/reconcile', clerkAuth, async (req, res) => {
     } catch (error) {
         console.error('User reconcile error:', error);
         res.status(500).json({ error: 'User reconcile failed' });
+    }
+});
+
+/**
+ * PUT /users/me/profile
+ * Update displayName/bio for the signed-in user.
+ */
+router.put('/me/profile', clerkAuth, async (req, res) => {
+    try {
+        const userId = req.auth.sub;
+        if (!userId) return res.status(400).json({ error: 'Invalid auth user' });
+        const displayName = String(req.body?.displayName || '').trim().slice(0, 120);
+        const bio = String(req.body?.bio || '').trim().slice(0, 300);
+
+        const user = await User.findOneAndUpdate(
+            { userId },
+            { $set: { displayName, bio } },
+            { upsert: true, new: true, projection: { userId: 1, displayName: 1, avatarUrl: 1, bio: 1, _id: 0 } }
+        );
+
+        res.json({ ok: true, user });
+    } catch (error) {
+        console.error('Profile update error:', error);
+        res.status(500).json({ error: 'Failed to update profile' });
+    }
+});
+
+/**
+ * POST /users/me/avatar
+ * Upload avatar image to Storj and update user profile.
+ */
+router.post('/me/avatar', clerkAuth, avatarUpload.single('avatar'), async (req, res) => {
+    try {
+        const userId = req.auth.sub;
+        if (!userId) return res.status(400).json({ error: 'Invalid auth user' });
+        if (!req.file) return res.status(400).json({ error: 'avatar is required' });
+
+        const ext = extFromMime(req.file.mimetype || '', 'jpg');
+        const key = buildKey({ folder: 'alu-avatars', userId, prefix: 'avatar', ext });
+        const avatarUrl = await uploadBuffer({
+            buffer: req.file.buffer,
+            contentType: req.file.mimetype || 'image/jpeg',
+            key,
+            cacheControl: 'public, max-age=86400',
+        });
+
+        await User.findOneAndUpdate(
+            { userId },
+            { $set: { avatarUrl } },
+            { upsert: true }
+        );
+
+        res.json({ ok: true, avatarUrl });
+    } catch (error) {
+        console.error('Avatar upload error:', error);
+        res.status(500).json({ error: 'Failed to upload avatar' });
     }
 });
 
