@@ -1,8 +1,13 @@
 const { GoogleGenAI } = require('@google/genai');
 const axios = require('axios');
 const { PostHog } = require('posthog-node');
-const { v2: cloudinary } = require('cloudinary');
 const { User, Post, Notification } = require('../config/db');
+const {
+  buildKey,
+  uploadBuffer,
+  uploadRemoteVideoWithThumbnail,
+  uploadVideoBufferWithThumbnail,
+} = require('./storj');
 
 // Initialize PostHog
 const posthog = new PostHog(process.env.POSTHOG_API_KEY, {
@@ -11,13 +16,6 @@ const posthog = new PostHog(process.env.POSTHOG_API_KEY, {
 
 // Initialize Google GenAI
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-
-// Configure Cloudinary (shared with uploadRoutes)
-cloudinary.config({
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-  api_key: process.env.CLOUDINARY_API_KEY,
-  api_secret: process.env.CLOUDINARY_API_SECRET,
-});
 
 // Limits
 const LIMITS = {
@@ -68,43 +66,43 @@ async function cleanPrompt(prompt) {
 }
 
 /**
- * Upload a base64 image buffer to Cloudinary and return the URL
+ * Upload a base64 image buffer to Storj and return the URL
  */
-async function uploadBase64ToCloudinary(base64Data, userId) {
-  return new Promise((resolve, reject) => {
-    const dataUri = `data:image/png;base64,${base64Data}`;
-    cloudinary.uploader.upload(dataUri, {
-      resource_type: 'image',
-      folder: 'alu-ai-gen',
-      public_id: `${userId}_${Date.now()}`,
-    }, (error, result) => {
-      if (error) reject(error);
-      else resolve(result.secure_url);
-    });
+async function uploadBase64ToStorj(base64Data, userId) {
+  const buffer = Buffer.from(base64Data, 'base64');
+  const key = buildKey({ folder: 'alu-ai-gen', userId, prefix: 'image', ext: 'png' });
+  return uploadBuffer({
+    buffer,
+    contentType: 'image/png',
+    key,
   });
 }
 
 /**
- * Upload a video buffer/URL to Cloudinary and return the URL
+ * Upload generated video to Storj and return video + thumbnail URL.
  */
-async function uploadVideoToCloudinary(videoUrl, userId) {
-  return new Promise((resolve, reject) => {
-    cloudinary.uploader.upload(videoUrl, {
-      resource_type: 'video',
+async function uploadVideoToStorj(videoSource, userId) {
+  if (String(videoSource || '').startsWith('http')) {
+    return uploadRemoteVideoWithThumbnail(videoSource, {
       folder: 'alu-ai-gen',
-      public_id: `${userId}_${Date.now()}`,
-      eager: [
-        { format: 'jpg', width: 400, height: 400, crop: 'thumb', gravity: 'auto' },
-      ],
-      eager_async: false,
-    }, (error, result) => {
-      if (error) reject(error);
-      else resolve({
-        videoUrl: result.secure_url,
-        thumbnailUrl: result.eager?.[0]?.secure_url || null,
-      });
+      userId,
+      prefix: 'video',
     });
-  });
+  }
+
+  if (String(videoSource || '').startsWith('data:video/')) {
+    const base64 = String(videoSource).split(',')[1] || '';
+    const buffer = Buffer.from(base64, 'base64');
+    const mimeType = String(videoSource).slice(5, String(videoSource).indexOf(';')) || 'video/mp4';
+    return uploadVideoBufferWithThumbnail(buffer, {
+      folder: 'alu-ai-gen',
+      userId,
+      prefix: 'video',
+      mimeType,
+    });
+  }
+
+  throw new Error('Unsupported generated video source format');
 }
 
 /**
@@ -189,8 +187,8 @@ async function generateContent(userId, prompt, type, isLongVideo = false, visibi
           if (!imagePart) throw new Error(`${imageModel.name} returned no image data.`);
 
           const base64Image = imagePart.inlineData.data;
-          contentUrl = await uploadBase64ToCloudinary(base64Image, userId);
-          console.log(`Image uploaded to Cloudinary: ${contentUrl}`);
+          contentUrl = await uploadBase64ToStorj(base64Image, userId);
+          console.log(`Image uploaded to Storj: ${contentUrl}`);
           imageError = null;
           break;
         } catch (err) {
@@ -256,10 +254,10 @@ async function generateContent(userId, prompt, type, isLongVideo = false, visibi
             throw new Error(`${veo.name} returned no usable video data.`);
           }
 
-          const cloudResult = await uploadVideoToCloudinary(videoSource, userId);
+          const cloudResult = await uploadVideoToStorj(videoSource, userId);
           contentUrl = cloudResult.videoUrl;
           thumbnailUrl = cloudResult.thumbnailUrl;
-          console.log(`Video uploaded to Cloudinary via ${veo.name}: ${contentUrl}`);
+          console.log(`Video uploaded to Storj via ${veo.name}: ${contentUrl}`);
 
           videoGenError = null;
           break;

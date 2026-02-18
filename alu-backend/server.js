@@ -18,6 +18,7 @@ const postRoutes = require('./routes/postRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
 const dmRoutes = require('./routes/dmRoutes');
 const storyRoutes = require('./routes/storyRoutes');
+const atprotoRoutes = require('./routes/atprotoRoutes');
 const clerkAuth = require('./middleware/clerkAuth');
 
 const app = express();
@@ -79,6 +80,7 @@ app.use('/posts', postRoutes);
 app.use('/notifications', notificationRoutes);
 app.use('/dm', dmRoutes);
 app.use('/stories', storyRoutes);
+app.use('/atproto', atprotoRoutes);
 
 // This route is now protected. A valid Clerk token is required.
 app.post('/generate', generateLimiter, clerkAuth, async (req, res) => {
@@ -185,9 +187,9 @@ app.get('/healthz', (req, res) => {
 // --- Short Video Stitching (up to 60s, 9:16 vertical) ---
 app.post('/generate/short-video', generateLimiter, clerkAuth, async (req, res) => {
   try {
-    const shortsEnabled = String(process.env.SHORTS_GENERATION_ENABLED || 'true').toLowerCase() === 'true';
+    const shortsEnabled = String(process.env.SHORTS_GENERATION_ENABLED || 'false').toLowerCase() === 'true';
     if (!shortsEnabled) {
-      return res.status(410).json({ error: 'Short generation is temporarily disabled.' });
+      return res.status(410).json({ error: 'AI short generation is currently disabled. You can still upload short videos.' });
     }
 
     const userId = req.auth.sub;

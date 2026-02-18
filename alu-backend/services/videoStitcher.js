@@ -6,15 +6,15 @@
  * 2. Generate each scene as an ~8s clip with Veo 2
  * 3. Download clips to temp directory
  * 4. Concatenate with FFmpeg (bundled via ffmpeg-static)
- * 5. Upload final video to Cloudinary
+ * 5. Upload final video to Storj
  * 6. Clean up temp files
  */
 
 const { GoogleGenAI } = require('@google/genai');
-const { v2: cloudinary } = require('cloudinary');
 const ffmpegPath = require('ffmpeg-static');
 const { updateJob } = require('./videoJobs');
-const { Post, User } = require('../config/db');
+const { Post, User, Notification } = require('../config/db');
+const { uploadVideoFileWithThumbnail } = require('./storj');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -24,13 +24,7 @@ const { execSync } = require('child_process');
 
 // Initialize Google GenAI
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-
-// Configure Cloudinary
-cloudinary.config({
-    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-    api_key: process.env.CLOUDINARY_API_KEY,
-    api_secret: process.env.CLOUDINARY_API_SECRET,
-});
+const ttsAi = new GoogleGenAI({ apiKey: process.env.GEMINI_TTS_API_KEY || process.env.GEMINI_API_KEY });
 
 const CLIP_DURATION = 8; // seconds per clip
 const MAX_PARALLEL_CLIPS = Number(process.env.VIDEO_MAX_PARALLEL_CLIPS || 1); // safer default for quota
@@ -40,13 +34,14 @@ const MAX_POLL_ATTEMPTS = 60; // 5 min per clip
 const SORA_API_URL = process.env.THIRD_PARTY_API_URL;
 const SORA_API_KEY = process.env.THIRD_PARTY_API_KEY;
 const ENABLE_SORA_FALLBACK = String(process.env.ENABLE_SORA_FALLBACK || 'false').toLowerCase() === 'true';
-const SCENE_MODEL_CANDIDATES = [
-    process.env.GEMINI_SCENE_MODEL,
-    process.env.GEMINI_TEXT_MODEL,
-    'gemini-2.5-flash-lite',
-    'gemini-2.5-flash',
-    'gemini-3-flash-preview',
-].filter(Boolean);
+const TEXT_MODEL_FALLBACKS = ['gemini-3-flash-preview', 'gemini-2.5-flash'];
+const DEFAULT_TTS_MODEL = process.env.GEMINI_TTS_MODEL || 'gemini-2.5-flash-preview-tts';
+const DEFAULT_TTS_VOICE = process.env.GEMINI_TTS_VOICE || 'Achird';
+
+function modelCandidates(primary, fallbacks) {
+    const candidates = [primary, ...fallbacks].filter(Boolean);
+    return [...new Set(candidates)];
+}
 
 /**
  * Split a prompt into multiple scene descriptions using Gemini Flash
@@ -61,23 +56,23 @@ Example format: ["A sunrise over mountains with golden light streaming through c
 Video concept: ${prompt}`;
 
     try {
-        let response = null;
-        let lastError = null;
-        for (const model of SCENE_MODEL_CANDIDATES) {
+        let text = '';
+        let lastErr = null;
+        for (const model of modelCandidates(process.env.GEMINI_TEXT_MODEL, TEXT_MODEL_FALLBACKS)) {
             try {
-                response = await ai.models.generateContent({
+                const response = await ai.models.generateContent({
                     model,
                     contents: instruction,
                 });
-                break;
+                text = response?.text?.trim?.() || '';
+                if (text) break;
             } catch (err) {
-                lastError = err;
-                console.warn(`Scene model ${model} failed:`, err.message);
+                lastErr = err;
+                console.warn(`Scene split model ${model} failed:`, err.message);
             }
         }
-        if (!response) throw lastError || new Error('No available scene model.');
+        if (!text) throw lastErr || new Error('No text model produced scene output.');
 
-        const text = response.text.trim();
         // Extract JSON array from response (handle code blocks)
         const jsonMatch = text.match(/\[[\s\S]*\]/);
         if (!jsonMatch) {
@@ -173,7 +168,7 @@ async function generateClipViaSora(scenePrompt, aspectRatio = '16:9') {
  */
 async function generateClipViaVeo(scenePrompt, aspectRatio = '16:9') {
     const operation = await ai.models.generateVideos({
-        model: 'veo-3.1-generate-preview',
+        model: 'veo-3.1-fast-generate-preview',
         prompt: scenePrompt,
         config: {
             aspectRatio: aspectRatio,
@@ -305,29 +300,73 @@ function concatenateClips(clipPaths, tmpDir, outputPath) {
     return outputPath;
 }
 
-/**
- * Upload final video to Cloudinary
- */
-async function uploadToCloudinary(filePath, userId, folder = 'alu-long-videos') {
-    return new Promise((resolve, reject) => {
-        cloudinary.uploader.upload(filePath, {
-            resource_type: 'video',
-            folder: folder,
-            public_id: `${userId}_${folder === 'alu-shorts' ? 'short' : 'long'}_${Date.now()}`,
-            eager: [
-                { format: 'jpg', width: 640, height: 360, crop: 'thumb', gravity: 'auto' },
-            ],
-            eager_async: false,
-            chunk_size: 20 * 1024 * 1024, // 20MB chunks for large files
-        }, (error, result) => {
-            if (error) reject(error);
-            else resolve({
-                videoUrl: result.secure_url,
-                thumbnailUrl: result.eager?.[0]?.secure_url || null,
-                duration: result.duration,
-            });
-        });
+function convertAudioToWav(inputPath, outputPath) {
+    const cmd = `"${ffmpegPath}" -y -i "${inputPath}" -ac 1 -ar 24000 -c:a pcm_s16le "${outputPath}"`;
+    execSync(cmd, { stdio: 'pipe', timeout: 120000 });
+    return outputPath;
+}
+
+function extractAudioPart(response) {
+    const parts = response?.candidates?.[0]?.content?.parts || [];
+    return parts.find((p) => p.inlineData?.mimeType?.startsWith('audio/') && p.inlineData?.data);
+}
+
+async function generateNarrationWav(prompt, durationSeconds, tmpDir) {
+    const words = Math.min(220, Math.max(40, Math.floor(durationSeconds * 2.2)));
+    const instruction = `Create short voiceover narration for a social video. Keep it under ${words} words, natural spoken English, no stage directions, no markdown.`;
+    const response = await ttsAi.models.generateContent({
+        model: DEFAULT_TTS_MODEL,
+        contents: `${instruction}\n\nVideo concept: ${prompt}`,
+        config: {
+            responseModalities: ['AUDIO'],
+            speechConfig: {
+                voiceConfig: {
+                    prebuiltVoiceConfig: {
+                        voiceName: DEFAULT_TTS_VOICE,
+                    },
+                },
+            },
+        },
     });
+
+    const audioPart = extractAudioPart(response);
+    if (!audioPart) {
+        throw new Error('TTS returned no audio data.');
+    }
+
+    const mimeType = audioPart.inlineData.mimeType || 'audio/wav';
+    const ext = mimeType.includes('wav') ? 'wav' : (mimeType.includes('mp3') ? 'mp3' : 'bin');
+    const rawAudioPath = path.join(tmpDir, `tts_narration_raw.${ext}`);
+    fs.writeFileSync(rawAudioPath, Buffer.from(audioPart.inlineData.data, 'base64'));
+
+    const wavPath = path.join(tmpDir, 'tts_narration.wav');
+    if (ext === 'wav') {
+        return rawAudioPath;
+    }
+    return convertAudioToWav(rawAudioPath, wavPath);
+}
+
+function mixNarrationIntoVideo(videoPath, narrationWavPath, outputPath) {
+    const cmd = `"${ffmpegPath}" -y -i "${videoPath}" -i "${narrationWavPath}" -filter_complex "[1:a]apad[a]" -map 0:v:0 -map "[a]" -c:v copy -c:a aac -shortest "${outputPath}"`;
+    execSync(cmd, { stdio: 'pipe', timeout: 180000 });
+    return outputPath;
+}
+
+/**
+ * Upload final video to Storj
+ */
+async function uploadToStorj(filePath, userId, folder = 'alu-long-videos') {
+    const prefix = folder === 'alu-shorts' ? 'short' : 'long';
+    const uploaded = await uploadVideoFileWithThumbnail(filePath, {
+        folder,
+        userId,
+        prefix,
+        mimeType: 'video/mp4',
+    });
+    return {
+        videoUrl: uploaded.videoUrl,
+        thumbnailUrl: uploaded.thumbnailUrl,
+    };
 }
 
 /**
@@ -345,7 +384,7 @@ function cleanup(tmpDir) {
  * Main stitching pipeline — runs in background
  */
 async function processVideoJob(job) {
-    const { jobId, userId, prompt, durationSeconds, visibility, videoType, displayName, avatarUrl } = job;
+    const { jobId, userId, prompt, durationSeconds, visibility, videoType, displayName, avatarUrl, useBonusShort } = job;
     const isShort = videoType === 'short';
     let tmpDir = null;
 
@@ -389,17 +428,36 @@ async function processVideoJob(job) {
 
         const outputPath = path.join(tmpDir, 'final_output.mp4');
         concatenateClips(clipPaths, tmpDir, outputPath);
+        let finalVideoPath = outputPath;
 
-        // 5. Upload to Cloudinary
+        // 5. Optional narration for shorts via Gemini TTS -> WAV -> mux
+        if (isShort) {
+            try {
+                updateJob(jobId, {
+                    status: 'adding_voiceover',
+                    currentStep: 'Generating voiceover...',
+                    progress: 82,
+                });
+
+                const narrationWav = await generateNarrationWav(prompt, durationSeconds, tmpDir);
+                const voicedOutputPath = path.join(tmpDir, 'final_output_voiced.mp4');
+                mixNarrationIntoVideo(outputPath, narrationWav, voicedOutputPath);
+                finalVideoPath = voicedOutputPath;
+            } catch (ttsErr) {
+                console.warn(`TTS voiceover skipped for job ${jobId}:`, ttsErr.message);
+            }
+        }
+
+        // 6. Upload to Storj
         updateJob(jobId, {
             status: 'uploading',
             currentStep: 'Uploading your video...',
             progress: 85,
         });
 
-        const cloudResult = await uploadToCloudinary(outputPath, userId, isShort ? 'alu-shorts' : 'alu-long-videos');
+        const cloudResult = await uploadToStorj(finalVideoPath, userId, isShort ? 'alu-shorts' : 'alu-long-videos');
 
-        // 6. Create Post in MongoDB
+        // 7. Create Post in MongoDB
         const post = await Post.create({
             userId,
             contentUrl: cloudResult.videoUrl,
@@ -415,14 +473,35 @@ async function processVideoJob(job) {
             avatarUrl: avatarUrl || '',
         });
 
-        // 7. Update user usage
+        if ((visibility || 'everyone') !== 'private') {
+            const creator = await User.findOne({ userId });
+            const followers = (creator?.followers || []).filter((followerId) => followerId !== userId);
+            if (followers.length > 0) {
+                await Notification.insertMany(
+                    followers.map((followerId) => ({
+                        userId: followerId,
+                        type: 'new_post',
+                        fromUserId: userId,
+                        fromDisplayName: displayName || creator?.displayName || '',
+                        fromAvatarUrl: avatarUrl || creator?.avatarUrl || '',
+                        postId: post._id,
+                    })),
+                    { ordered: false }
+                );
+            }
+        }
+
+        // 8. Update user usage
         const user = await User.findOne({ userId });
         if (user) {
             user[isShort ? 'dailyShorts' : 'dailyLongVids'] += 1;
+            if (isShort && useBonusShort) {
+                user.bonusShorts = Math.max(0, (user.bonusShorts || 0) - 1);
+            }
             await user.save();
         }
 
-        // 8. Mark complete
+        // 9. Mark complete
         updateJob(jobId, {
             status: 'complete',
             progress: 100,
