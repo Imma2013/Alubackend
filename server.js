@@ -18,10 +18,13 @@ const postRoutes = require('./routes/postRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
 const dmRoutes = require('./routes/dmRoutes');
 const storyRoutes = require('./routes/storyRoutes');
+const atprotoRoutes = require('./routes/atprotoRoutes');
+const mediaRoutes = require('./routes/mediaRoutes');
 const clerkAuth = require('./middleware/clerkAuth');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
+app.set('trust proxy', 1);
 
 // Middleware
 app.use((req, res, next) => {
@@ -35,27 +38,35 @@ app.use(cors());
 app.use(helmet());
 app.use(morgan('dev'));
 
-// Global rate limiter - 100 requests per 15 minutes per IP
+const limiterHandler = (friendly) => (req, res) => {
+  res.status(429).json({ error: friendly });
+};
+
+// Global limiter: high enough for polling/streaming/chat traffic.
 const globalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // Max 100 requests per windowMs
-  message: 'Too many requests from this IP, please try again later.',
-  standardHeaders: true, // Return rate limit info in `RateLimit-*` headers
-  legacyHeaders: false, // Disable `X-RateLimit-*` headers
+  max: Number(process.env.GLOBAL_RATE_LIMIT_MAX || 1000),
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: limiterHandler('Too many requests from this IP, please try again later.'),
 });
 
-// Stricter rate limiter for uploads - 10 req/min per IP
+// Upload limiter: still strict
 const uploadLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
-  max: 10,
-  message: 'Too many uploads. Please try again later.',
+  max: Number(process.env.UPLOAD_RATE_LIMIT_MAX || 20),
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: limiterHandler('Too many uploads. Please try again later.'),
 });
 
-// Stricter rate limiter for AI generation - 20 req/hour per IP
+// AI generation limiter (cost guard)
 const generateLimiter = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 hour
-  max: 20,
-  message: 'Too many AI generation requests. Please try again later.',
+  max: Number(process.env.GENERATE_RATE_LIMIT_MAX || 40),
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: limiterHandler('Too many AI generation requests from this IP, please try again later.'),
 });
 
 // Apply global rate limiter to all routes
@@ -70,6 +81,8 @@ app.use('/posts', postRoutes);
 app.use('/notifications', notificationRoutes);
 app.use('/dm', dmRoutes);
 app.use('/stories', storyRoutes);
+app.use('/atproto', atprotoRoutes);
+app.use('/media', mediaRoutes);
 
 // This route is now protected. A valid Clerk token is required.
 app.post('/generate', generateLimiter, clerkAuth, async (req, res) => {
@@ -176,6 +189,11 @@ app.get('/healthz', (req, res) => {
 // --- Short Video Stitching (up to 60s, 9:16 vertical) ---
 app.post('/generate/short-video', generateLimiter, clerkAuth, async (req, res) => {
   try {
+    const shortsEnabled = String(process.env.SHORTS_GENERATION_ENABLED || 'false').toLowerCase() === 'true';
+    if (!shortsEnabled) {
+      return res.status(410).json({ error: 'AI short generation is currently disabled. You can still upload short videos.' });
+    }
+
     const userId = req.auth.sub;
     const { prompt, durationSeconds, visibility, displayName, avatarUrl } = req.body;
 
@@ -183,7 +201,8 @@ app.post('/generate/short-video', generateLimiter, clerkAuth, async (req, res) =
       return res.status(400).json({ error: 'Missing prompt' });
     }
 
-    const duration = Math.min(Math.max(durationSeconds || 60, 8), 60); // 8s - 60s
+    const maxShortSeconds = Number(process.env.SHORT_VIDEO_MAX_SECONDS || 32);
+    const duration = Math.min(Math.max(durationSeconds || 60, 8), Math.max(8, maxShortSeconds));
 
     // Check weekly shorts limit
     let user = await User.findOne({ userId });
